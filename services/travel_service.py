@@ -43,21 +43,35 @@ class TravelService:
         Returns:
             TravelPlan with both text guide and HTML content
         """
-        logger.info(f"Generating travel guide for: {requirements[:100]}...")
+        logger.info("=" * 50)
+        logger.info("🧮 Starting travel guide generation")
+        logger.info(f"   Requirements: {requirements[:100]}..." if len(requirements) > 100 else f"   Requirements: {requirements}")
+        logger.info("=" * 50)
         
         # Step 1: Generate travel guide using tool-calling agent
+        logger.info("")
+        logger.info("📝 Step 1/2: Generating travel guide text (with MCP tools)...")
         guide_text = await self._generate_guide_text(requirements)
-        logger.info("Travel guide text generated successfully")
+        logger.info(f"✅ Step 1/2: Travel guide text generated ({len(guide_text)} chars)")
         
         # Step 2: Convert to beautiful HTML
+        logger.info("")
+        logger.info("🎨 Step 2/2: Converting to HTML format...")
         html_content = await self._generate_html(guide_text)
-        logger.info("HTML content generated successfully")
+        logger.info(f"✅ Step 2/2: HTML content generated ({len(html_content)} chars)")
         
         # Clean HTML output
         html_content = self._clean_html(html_content)
         
         # Save outputs
         await self._save_outputs(guide_text, html_content)
+        
+        logger.info("")
+        logger.info("=" * 50)
+        logger.info("🎉 Travel guide generation completed!")
+        logger.info(f"   Guide text: {len(guide_text)} chars")
+        logger.info(f"   HTML: {len(html_content)} chars")
+        logger.info("=" * 50)
         
         return TravelPlan(
             guide_text=guide_text,
@@ -66,29 +80,36 @@ class TravelService:
     
     async def _generate_guide_text(self, requirements: str) -> str:
         """Generate the travel guide text using MCP tools."""
+        logger.info("[Agent] 🤖 Creating tool-enabled agent for guide generation...")
         agent = create_agent(use_tools=True)
+        logger.info("[Agent] 🚀 Starting agent execution with MCP tools")
         
         result = await agent.run(
             user_input=requirements,
             chat_history=[],
         )
         
+        logger.info("[Agent] ✅ Agent completed guide generation")
         return result
     
     async def _generate_html(self, guide_text: str) -> str:
         """Convert travel guide text to beautiful HTML."""
+        logger.info("[HTML] 📄 Loading HTML template prompt...")
         html_prompt = load_prompt("html_template.txt")
         
         # Use a non-tool agent for HTML generation
+        logger.info("[HTML] 🤖 Creating agent for HTML conversion (no tools)...")
         agent = create_agent(
             system_prompt=html_prompt,
             use_tools=False,
         )
         
+        logger.info("[HTML] 🎨 Starting HTML conversion...")
         result = await agent.run(
             user_input=f"请将以下旅行攻略转换为精美的HTML页面：\n\n{guide_text}",
         )
         
+        logger.info("[HTML] ✅ HTML conversion completed")
         return result
     
     def _clean_html(self, html: str) -> str:

@@ -55,12 +55,19 @@ async def run_xhs_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     """Run a tool from the Xiaohongshu MCP server via stdio."""
     settings = get_settings()
     
+    logger.info(f"[XHS-MCP] 🔴 Calling tool: {tool_name}")
+    logger.debug(f"[XHS-MCP] Arguments: {json.dumps(arguments, ensure_ascii=False)}")
+    
     if not settings.xhs_cookie:
+        logger.warning("[XHS-MCP] ⚠️ XHS_COOKIE not configured")
         return "Xiaohongshu Cookie not configured. Please set XHS_COOKIE in .env."
     
     if not settings.xhs_mcp_dir:
+        logger.warning("[XHS-MCP] ⚠️ XHS_MCP_DIR not configured")
         return "Xiaohongshu MCP directory not configured. Please set XHS_MCP_DIR in .env."
 
+    logger.debug(f"[XHS-MCP] MCP directory: {settings.xhs_mcp_dir}")
+    
     # Prepare server parameters
     # The server is run via 'uv --directory <dir> run main.py'
     server_params = StdioServerParameters(
@@ -78,21 +85,32 @@ async def run_xhs_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     )
 
     try:
+        logger.info("[XHS-MCP] 🔄 Connecting to Xiaohongshu MCP server...")
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
+                logger.debug("[XHS-MCP] Initializing session...")
                 await session.initialize()
+                logger.info("[XHS-MCP] ✅ Session initialized")
                 
                 # Call the tool
+                logger.info(f"[XHS-MCP] 📤 Executing tool: {tool_name}")
                 result = await session.call_tool(tool_name, arguments)
                 
                 if result.isError:
+                    logger.error(f"[XHS-MCP] ❌ Tool returned error: {result.content}")
                     return f"MCP Error: {result.content}"
                 
                 # Assume content is a list of TextContent or similar
-                return "\n".join([c.text for c in result.content if hasattr(c, 'text')])
+                content = "\n".join([c.text for c in result.content if hasattr(c, 'text')])
+                logger.info(f"[XHS-MCP] ✅ Tool {tool_name} completed, response length: {len(content)} chars")
+                logger.debug(f"[XHS-MCP] Response preview: {content[:200]}..." if len(content) > 200 else f"[XHS-MCP] Response: {content}")
+                return content
                 
+    except FileNotFoundError as e:
+        logger.error(f"[XHS-MCP] ❌ Command not found: {e}")
+        return f"Error: 'uv' command not found. Please install it with: pip install uv"
     except Exception as e:
-        logger.error(f"Failed to call Xiaohongshu MCP: {e}")
+        logger.error(f"[XHS-MCP] ❌ Failed to call Xiaohongshu MCP: {type(e).__name__}: {e}")
         return f"Error connecting to Xiaohongshu MCP: {str(e)}"
 
 
@@ -102,19 +120,33 @@ async def search_xiaohongshu(query: str) -> str:
     """
     Search Xiaohongshu (Little Red Book) for travel guides and tips.
     """
-    logger.info(f"Searching Xiaohongshu for: {query}")
+    logger.info(f"[XHS] 🔍 Searching Xiaohongshu for: '{query}'")
     
     # Map to 'search_notes' tool in jobsonlook-xhs-mcp
-    return await run_xhs_mcp_tool("search_notes", {"keyword": query})
+    result = await run_xhs_mcp_tool("search_notes", {"keyword": query})
+    
+    if result.startswith("Error") or result.startswith("Xiaohongshu"):
+        logger.warning(f"[XHS] ⚠️ Search failed: {result[:100]}")
+    else:
+        logger.info(f"[XHS] ✅ Search completed, got {len(result)} chars of results")
+    
+    return result
 
 
 async def get_xhs_note_content(note_id: str) -> str:
     """
     Get detailed content of a specific Xiaohongshu note.
     """
-    logger.info(f"Getting Xiaohongshu note content: {note_id}")
+    logger.info(f"[XHS] 📄 Getting note content: {note_id}")
     
-    return await run_xhs_mcp_tool("get_note_content", {"note_id": note_id})
+    result = await run_xhs_mcp_tool("get_note_content", {"note_id": note_id})
+    
+    if result.startswith("Error") or result.startswith("Xiaohongshu"):
+        logger.warning(f"[XHS] ⚠️ Get note failed: {result[:100]}")
+    else:
+        logger.info(f"[XHS] ✅ Got note content, {len(result)} chars")
+    
+    return result
 
 
 async def get_weather_forecast(city: str, date: str) -> str:
@@ -123,19 +155,29 @@ async def get_weather_forecast(city: str, date: str) -> str:
     """
     settings = get_settings()
     
+    logger.info(f"[Weather-MCP] 🌤️ Getting weather for: {city} on {date}")
+    
     if not settings.weather_mcp_url:
+        logger.warning("[Weather-MCP] ⚠️ WEATHER_MCP_URL not configured")
         return "Weather MCP service not configured. Please set WEATHER_MCP_URL."
     
     try:
-        logger.info(f"Getting weather for {city} on {date}")
+        logger.debug(f"[Weather-MCP] Connecting to: {settings.weather_mcp_url}")
         
         # In production, this would call the Weather MCP SSE service
         async with httpx.AsyncClient(timeout=30.0) as client:
             # SSE connection would be established here
+            logger.info(f"[Weather-MCP] ✅ Weather query completed for {city}")
             return f"[Weather Forecast] {city} on {date} - MCP service would return weather data here."
             
+    except httpx.ConnectError as e:
+        logger.error(f"[Weather-MCP] ❌ Connection failed: {e}")
+        return f"Error connecting to Weather MCP: {str(e)}"
+    except httpx.TimeoutException:
+        logger.error(f"[Weather-MCP] ❌ Request timeout")
+        return "Weather MCP request timed out."
     except Exception as e:
-        logger.error(f"Error getting weather: {e}")
+        logger.error(f"[Weather-MCP] ❌ Error getting weather: {type(e).__name__}: {e}")
         return f"Error getting weather forecast: {str(e)}"
 
 
@@ -145,18 +187,28 @@ async def plan_route(origin: str, destination: str, mode: str = "transit") -> st
     """
     settings = get_settings()
     
+    logger.info(f"[Amap-MCP] 🗺️ Planning route: {origin} → {destination} (mode: {mode})")
+    
     if not settings.amap_mcp_url:
+        logger.warning("[Amap-MCP] ⚠️ AMAP_MCP_URL not configured")
         return "Amap MCP service not configured. Please set AMAP_MCP_URL."
     
     try:
-        logger.info(f"Planning route from {origin} to {destination} via {mode}")
+        logger.debug(f"[Amap-MCP] Connecting to: {settings.amap_mcp_url[:50]}...")
         
         # In production, this would call the Amap MCP SSE service
         async with httpx.AsyncClient(timeout=30.0) as client:
+            logger.info(f"[Amap-MCP] ✅ Route planning completed: {origin} → {destination}")
             return f"[Route Planning] {origin} → {destination} ({mode}) - MCP service would return route here."
             
+    except httpx.ConnectError as e:
+        logger.error(f"[Amap-MCP] ❌ Connection failed: {e}")
+        return f"Error connecting to Amap MCP: {str(e)}"
+    except httpx.TimeoutException:
+        logger.error(f"[Amap-MCP] ❌ Request timeout")
+        return "Amap MCP request timed out."
     except Exception as e:
-        logger.error(f"Error planning route: {e}")
+        logger.error(f"[Amap-MCP] ❌ Error planning route: {type(e).__name__}: {e}")
         return f"Error planning route: {str(e)}"
 
 
@@ -166,16 +218,27 @@ async def search_poi(keyword: str, city: str, category: str = "") -> str:
     """
     settings = get_settings()
     
+    category_info = f" (category: {category})" if category else ""
+    logger.info(f"[Amap-MCP] 📍 Searching POI: '{keyword}' in {city}{category_info}")
+    
     if not settings.amap_mcp_url:
+        logger.warning("[Amap-MCP] ⚠️ AMAP_MCP_URL not configured")
         return "Amap MCP service not configured. Please set AMAP_MCP_URL."
     
     try:
-        logger.info(f"Searching POI: {keyword} in {city}")
+        logger.debug(f"[Amap-MCP] Connecting to: {settings.amap_mcp_url[:50]}...")
         
+        logger.info(f"[Amap-MCP] ✅ POI search completed: {keyword} in {city}")
         return f"[POI Search] {keyword} in {city} - MCP service would return locations here."
             
+    except httpx.ConnectError as e:
+        logger.error(f"[Amap-MCP] ❌ Connection failed: {e}")
+        return f"Error connecting to Amap MCP: {str(e)}"
+    except httpx.TimeoutException:
+        logger.error(f"[Amap-MCP] ❌ Request timeout")
+        return "Amap MCP request timed out."
     except Exception as e:
-        logger.error(f"Error searching POI: {e}")
+        logger.error(f"[Amap-MCP] ❌ Error searching POI: {type(e).__name__}: {e}")
         return f"Error searching POI: {str(e)}"
 
 

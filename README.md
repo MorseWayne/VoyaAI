@@ -103,6 +103,37 @@ curl "http://localhost:8182/travel/html"
 curl "http://localhost:8182/test?content=Hello"
 ```
 
+### 查看服务状态
+
+```bash
+curl "http://localhost:8182/status"
+```
+
+## 🧪 测试
+
+项目提供了独立的测试脚本，用于验证各个 MCP 服务是否正常工作：
+
+```bash
+# 测试 LLM 连接
+python tests/test_llm.py
+
+# 测试小红书 MCP
+python tests/test_xhs_mcp.py
+
+# 测试天气 MCP
+python tests/test_weather_mcp.py
+
+# 测试高德地图 MCP
+python tests/test_amap_mcp.py
+
+# 运行所有测试
+python tests/test_all.py
+
+# 只测试特定服务
+python tests/test_all.py --llm
+python tests/test_all.py --xhs
+```
+
 ## 📁 项目结构
 
 ```
@@ -120,8 +151,14 @@ VoyaAI/
 ├── prompts/
 │   ├── travel_guide.txt # 旅游规划提示词
 │   └── html_template.txt # HTML 生成提示词
+├── tests/               # 测试脚本
+│   ├── test_llm.py      # LLM 连接测试
+│   ├── test_xhs_mcp.py  # 小红书 MCP 测试
+│   ├── test_weather_mcp.py # 天气 MCP 测试
+│   ├── test_amap_mcp.py # 高德地图 MCP 测试
+│   └── test_all.py      # 综合测试
 └── output/              # 生成的文件
-```FF
+```
 
 ## 🔧 技术栈
 

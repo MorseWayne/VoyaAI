@@ -86,34 +86,58 @@ class Agent:
         
         messages.append({"role": "user", "content": user_input})
         
+        tools_info = f"{len(self.tools)} tools" if self.tools else "no tools"
+        logger.info(f"[Agent] 🚀 Starting agent loop (model: {self.model}, {tools_info})")
+        logger.debug(f"[Agent] User input: {user_input[:100]}..." if len(user_input) > 100 else f"[Agent] User input: {user_input}")
+        
         # Agent loop
         for iteration in range(self.max_iterations):
-            logger.debug(f"Agent iteration {iteration + 1}/{self.max_iterations}")
+            logger.info(f"[Agent] 🔄 Iteration {iteration + 1}/{self.max_iterations}")
             
             # Call LLM
+            logger.debug(f"[Agent] Calling LLM with {len(messages)} messages...")
             response = await self._call_llm(messages)
             assistant_message = response.choices[0].message
             
+            # Log token usage if available
+            if response.usage:
+                logger.debug(f"[Agent] Token usage: prompt={response.usage.prompt_tokens}, completion={response.usage.completion_tokens}, total={response.usage.total_tokens}")
+            
             # Check if we have tool calls
             if assistant_message.tool_calls:
+                tool_count = len(assistant_message.tool_calls)
+                logger.info(f"[Agent] 🛠️ LLM requested {tool_count} tool call(s)")
+                
                 # Add assistant message with tool calls
                 messages.append(self._message_to_dict(assistant_message))
                 
                 # Execute each tool call
-                for tool_call in assistant_message.tool_calls:
+                for i, tool_call in enumerate(assistant_message.tool_calls, 1):
+                    tool_name = tool_call.function.name
+                    tool_args = tool_call.function.arguments
+                    logger.info(f"[Agent] ⚙️  Executing tool {i}/{tool_count}: {tool_name}")
+                    logger.debug(f"[Agent]    Arguments: {tool_args}")
+                    
                     tool_result = await self._execute_tool(tool_call)
+                    
+                    result_preview = tool_result[:200] + "..." if len(tool_result) > 200 else tool_result
+                    logger.info(f"[Agent] ✅  Tool {tool_name} completed ({len(tool_result)} chars)")
+                    logger.debug(f"[Agent]    Result preview: {result_preview}")
+                    
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": tool_result,
                     })
-                    logger.info(f"Tool {tool_call.function.name} executed")
             else:
                 # No tool calls, we have the final response
-                return assistant_message.content or ""
+                content = assistant_message.content or ""
+                logger.info(f"[Agent] ✅ Agent completed after {iteration + 1} iteration(s)")
+                logger.info(f"[Agent] 📝 Final response: {len(content)} chars")
+                return content
         
         # Max iterations reached
-        logger.warning("Agent reached max iterations")
+        logger.warning(f"[Agent] ⚠️ Max iterations ({self.max_iterations}) reached")
         return assistant_message.content or "抱歉，处理时间过长，请重试。"
     
     async def _call_llm(self, messages: list[dict]) -> Any:
@@ -128,7 +152,15 @@ class Agent:
             kwargs["tools"] = self.tools
             kwargs["tool_choice"] = "auto"
         
-        return await self.client.chat.completions.create(**kwargs)
+        logger.debug(f"[LLM] 📤 Sending request to LLM (model: {self.model}, messages: {len(messages)})")
+        
+        try:
+            result = await self.client.chat.completions.create(**kwargs)
+            logger.debug(f"[LLM] 📥 Received response from LLM")
+            return result
+        except Exception as e:
+            logger.error(f"[LLM] ❌ LLM call failed: {type(e).__name__}: {e}")
+            raise
     
     async def _execute_tool(self, tool_call: ChatCompletionMessageToolCall) -> str:
         """Execute a tool call and return the result."""

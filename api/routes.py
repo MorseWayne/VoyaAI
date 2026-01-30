@@ -152,3 +152,71 @@ async def test_endpoint(content: str):
             status_code=500,
             detail=str(e)
         )
+
+
+@router.get("/status")
+async def get_service_status():
+    """
+    Get status of all MCP services and LLM connection.
+    
+    This endpoint provides a quick overview of which services are configured
+    and available without actually calling them.
+    """
+    from config import get_settings
+    from pathlib import Path
+    
+    settings = get_settings()
+    
+    # Check LLM configuration
+    llm_status = {
+        "configured": bool(settings.llm_base_url and settings.llm_api_key),
+        "base_url": settings.llm_base_url,
+        "model": settings.llm_model,
+        "api_key": "***" + settings.llm_api_key[-4:] if len(settings.llm_api_key) > 4 else "(not set)",
+    }
+    
+    # Check Xiaohongshu MCP
+    xhs_mcp_dir = Path(settings.xhs_mcp_dir) if settings.xhs_mcp_dir else None
+    xhs_status = {
+        "configured": bool(settings.xhs_cookie and settings.xhs_mcp_dir),
+        "cookie_set": bool(settings.xhs_cookie),
+        "mcp_dir": settings.xhs_mcp_dir or "(not set)",
+        "mcp_dir_exists": xhs_mcp_dir.exists() if xhs_mcp_dir else False,
+    }
+    
+    # Check Weather MCP
+    weather_status = {
+        "configured": bool(settings.weather_mcp_url),
+        "url": settings.weather_mcp_url or "(not set)",
+    }
+    
+    # Check Amap MCP
+    amap_status = {
+        "configured": bool(settings.amap_mcp_url),
+        "url": settings.amap_mcp_url[:50] + "..." if settings.amap_mcp_url and len(settings.amap_mcp_url) > 50 else settings.amap_mcp_url or "(not set)",
+        "has_key": "key=" in (settings.amap_mcp_url or "").lower(),
+    }
+    
+    # Summary
+    services_configured = sum([
+        llm_status["configured"],
+        xhs_status["configured"],
+        weather_status["configured"],
+        amap_status["configured"],
+    ])
+    
+    return {
+        "status": "healthy",
+        "services_configured": f"{services_configured}/4",
+        "llm": llm_status,
+        "xiaohongshu_mcp": xhs_status,
+        "weather_mcp": weather_status,
+        "amap_mcp": amap_status,
+        "tips": {
+            "test_llm": "python tests/test_llm.py",
+            "test_xhs": "python tests/test_xhs_mcp.py",
+            "test_weather": "python tests/test_weather_mcp.py",
+            "test_amap": "python tests/test_amap_mcp.py",
+            "test_all": "python tests/test_all.py",
+        }
+    }
