@@ -90,8 +90,7 @@ def print_config_info():
     print(f"  LLM API Key:    {'***' + settings.llm_api_key[-4:] if len(settings.llm_api_key) > 4 else '(not set)'}")
     print(f"  Amap MCP URL:   {settings.amap_mcp_url or '(not set)'}")
     print(f"  Weather MCP:    {settings.weather_mcp_url or '(not set)'}")
-    print(f"  XHS Cookie:     {'(set)' if settings.xhs_cookie else '(not set)'}")
-    print(f"  XHS MCP Dir:    {settings.xhs_mcp_dir or '(not set)'}")
+    print(f"  XHS MCP URL:    {settings.xhs_mcp_url or '(not set)'}")
 
 
 def print_result(result: TestResult):

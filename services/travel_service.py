@@ -81,7 +81,7 @@ class TravelService:
     async def _generate_guide_text(self, requirements: str) -> str:
         """Generate the travel guide text using MCP tools."""
         logger.info("[Agent] 🤖 Creating tool-enabled agent for guide generation...")
-        agent = create_agent(use_tools=True)
+        agent = await create_agent(use_tools=True)
         logger.info("[Agent] 🚀 Starting agent execution with MCP tools")
         
         result = await agent.run(
@@ -99,7 +99,7 @@ class TravelService:
         
         # Use a non-tool agent for HTML generation
         logger.info("[HTML] 🤖 Creating agent for HTML conversion (no tools)...")
-        agent = create_agent(
+        agent = await create_agent(
             system_prompt=html_prompt,
             use_tools=False,
         )

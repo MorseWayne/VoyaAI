@@ -1,0 +1,26 @@
+services:
+  xiaohongshu-mcp:
+    # Docker Hub 镜像（默认）
+    image: xpzouying/xiaohongshu-mcp
+    # 阿里云镜像源（国内用户推荐，拉取更快）
+    # image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
+    container_name: xiaohongshu-mcp
+    restart: unless-stopped
+    init: true
+    tty: true
+    volumes:
+      - ./data:/app/data
+      - ./images:/app/images
+    environment:
+      - ROD_BROWSER_BIN=/usr/bin/google-chrome
+      - COOKIES_PATH=/app/data/cookies.json
+    ports:
+      - "18060:18060"
+    # 使用真实 DNS，避免代理软件的 fake-ip 劫持
+    dns:
+      - 223.5.5.5      # 阿里 DNS
+      - 119.29.29.29   # 腾讯 DNS
+    # 添加 hosts 映射，绕过 DNS 劫持
+    extra_hosts:
+      - "www.xiaohongshu.com:81.69.116.102"
+      - "edith.xiaohongshu.com:81.69.116.102"

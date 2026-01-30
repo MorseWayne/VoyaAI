@@ -176,12 +176,9 @@ async def get_service_status():
     }
     
     # Check Xiaohongshu MCP
-    xhs_mcp_dir = Path(settings.xhs_mcp_dir) if settings.xhs_mcp_dir else None
     xhs_status = {
-        "configured": bool(settings.xhs_cookie and settings.xhs_mcp_dir),
-        "cookie_set": bool(settings.xhs_cookie),
-        "mcp_dir": settings.xhs_mcp_dir or "(not set)",
-        "mcp_dir_exists": xhs_mcp_dir.exists() if xhs_mcp_dir else False,
+        "configured": bool(settings.xhs_mcp_url),
+        "url": settings.xhs_mcp_url or "(not set)",
     }
     
     # Check Weather MCP

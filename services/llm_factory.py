@@ -5,7 +5,7 @@ Uses native OpenAI SDK with custom Agent loop.
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Any
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall
@@ -42,7 +42,7 @@ class Agent:
     
     Implements a loop that:
     1. Sends messages to the LLM
-    2. If LLM requests tool calls, executes them
+    2. If LLM requests tool calls, executes them via MCP
     3. Sends tool results back to LLM
     4. Repeats until LLM returns a final response
     """
@@ -53,14 +53,12 @@ class Agent:
         model: str,
         system_prompt: str,
         tools: Optional[list[dict]] = None,
-        tool_functions: Optional[dict[str, Callable]] = None,
         max_iterations: int = 15,
     ):
         self.client = client
         self.model = model
         self.system_prompt = system_prompt
         self.tools = tools or []
-        self.tool_functions = tool_functions or {}
         self.max_iterations = max_iterations
     
     async def run(
@@ -163,19 +161,17 @@ class Agent:
             raise
     
     async def _execute_tool(self, tool_call: ChatCompletionMessageToolCall) -> str:
-        """Execute a tool call and return the result."""
-        function_name = tool_call.function.name
+        """Execute a tool call via MCP and return the result."""
+        from mcp_services import execute_tool
         
-        if function_name not in self.tool_functions:
-            return f"Error: Unknown tool '{function_name}'"
+        function_name = tool_call.function.name
         
         try:
             # Parse arguments
             arguments = json.loads(tool_call.function.arguments)
             
-            # Call the tool function
-            func = self.tool_functions[function_name]
-            result = await func(**arguments)
+            # Call the tool via MCP
+            result = await execute_tool(function_name, arguments)
             
             return str(result)
         except json.JSONDecodeError as e:
@@ -207,7 +203,7 @@ class Agent:
         return msg_dict
 
 
-def create_agent(
+async def create_agent(
     system_prompt: Optional[str] = None,
     use_tools: bool = True,
 ) -> Agent:
@@ -228,20 +224,17 @@ def create_agent(
     if system_prompt is None:
         system_prompt = load_prompt("travel_guide.txt")
     
+    tools = None
     if use_tools:
-        from mcp import get_tools_schema, get_tool_functions
-        tools = get_tools_schema()
-        tool_functions = get_tool_functions()
-    else:
-        tools = None
-        tool_functions = None
+        from mcp_services import get_tools_schema
+        tools = await get_tools_schema()
+        logger.info(f"[Agent] Loaded {len(tools)} tools from MCP services")
     
     return Agent(
         client=client,
         model=settings.llm_model,
         system_prompt=system_prompt,
         tools=tools,
-        tool_functions=tool_functions,
     )
 
 

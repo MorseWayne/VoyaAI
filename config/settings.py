@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     weather_mcp_url: str = Field(default="http://localhost:8083/sse", description="Weather MCP URL")
     xhs_cookie: str = Field(default="", description="Xiaohongshu Cookie")
     xhs_mcp_dir: str = Field(default="", description="Directory for jobsonlook-xhs-mcp")
+    xhs_mcp_url: str = Field(default="http://192.168.31.121:18060/mcp", description="Xiaohongshu MCP Streamable HTTP URL")
     
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
