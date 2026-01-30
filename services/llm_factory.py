@@ -1,16 +1,16 @@
 """
-LLM Factory - Creates language model instances based on configuration.
+LLM Factory - Creates OpenAI client and Agent for tool calling.
+Uses native OpenAI SDK with custom Agent loop.
 """
+import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Any
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall
 
 from config import get_settings
-from mcp import get_mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -27,62 +27,158 @@ def load_prompt(filename: str) -> str:
     return ""
 
 
-def create_llm(
-    provider: Optional[str] = None,
-    for_tools: bool = True
-) -> BaseChatModel:
-    """
-    Create a language model instance.
-    
-    Args:
-        provider: LLM provider (anthropic, openai, google). 
-                  If None, uses settings default.
-        for_tools: If True, use the primary model for tool calling.
-                   If False, may use a faster/cheaper model.
-    
-    Returns:
-        Configured language model instance.
-    """
+def create_client() -> AsyncOpenAI:
+    """Create an OpenAI client configured for the proxy service."""
     settings = get_settings()
-    provider = provider or settings.llm_provider
+    return AsyncOpenAI(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+    )
+
+
+class Agent:
+    """
+    Simple Agent that handles tool calling with OpenAI API.
     
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
+    Implements a loop that:
+    1. Sends messages to the LLM
+    2. If LLM requests tool calls, executes them
+    3. Sends tool results back to LLM
+    4. Repeats until LLM returns a final response
+    """
+    
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str,
+        system_prompt: str,
+        tools: Optional[list[dict]] = None,
+        tool_functions: Optional[dict[str, Callable]] = None,
+        max_iterations: int = 15,
+    ):
+        self.client = client
+        self.model = model
+        self.system_prompt = system_prompt
+        self.tools = tools or []
+        self.tool_functions = tool_functions or {}
+        self.max_iterations = max_iterations
+    
+    async def run(
+        self,
+        user_input: str,
+        chat_history: Optional[list[dict]] = None,
+    ) -> str:
+        """
+        Run the agent with user input.
         
-        return ChatAnthropic(
-            api_key=settings.anthropic_api_key,
-            model=settings.anthropic_model,
-            timeout=300,
-            max_retries=2,
-        )
-    
-    elif provider == "openai":
-        from langchain_openai import ChatOpenAI
+        Args:
+            user_input: The user's message
+            chat_history: Optional previous conversation history
         
-        return ChatOpenAI(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            timeout=300,
-            max_retries=2,
-        )
-    
-    elif provider == "google":
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        Returns:
+            The agent's final response text
+        """
+        # Build messages
+        messages = [{"role": "system", "content": self.system_prompt}]
         
-        return ChatGoogleGenerativeAI(
-            google_api_key=settings.google_api_key,
-            model=settings.google_model,
-            timeout=300,
-        )
+        if chat_history:
+            messages.extend(chat_history)
+        
+        messages.append({"role": "user", "content": user_input})
+        
+        # Agent loop
+        for iteration in range(self.max_iterations):
+            logger.debug(f"Agent iteration {iteration + 1}/{self.max_iterations}")
+            
+            # Call LLM
+            response = await self._call_llm(messages)
+            assistant_message = response.choices[0].message
+            
+            # Check if we have tool calls
+            if assistant_message.tool_calls:
+                # Add assistant message with tool calls
+                messages.append(self._message_to_dict(assistant_message))
+                
+                # Execute each tool call
+                for tool_call in assistant_message.tool_calls:
+                    tool_result = await self._execute_tool(tool_call)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result,
+                    })
+                    logger.info(f"Tool {tool_call.function.name} executed")
+            else:
+                # No tool calls, we have the final response
+                return assistant_message.content or ""
+        
+        # Max iterations reached
+        logger.warning("Agent reached max iterations")
+        return assistant_message.content or "抱歉，处理时间过长，请重试。"
     
-    else:
-        raise ValueError(f"Unsupported LLM provider: {provider}")
+    async def _call_llm(self, messages: list[dict]) -> Any:
+        """Call the LLM with messages and optional tools."""
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "timeout": 300,
+        }
+        
+        if self.tools:
+            kwargs["tools"] = self.tools
+            kwargs["tool_choice"] = "auto"
+        
+        return await self.client.chat.completions.create(**kwargs)
+    
+    async def _execute_tool(self, tool_call: ChatCompletionMessageToolCall) -> str:
+        """Execute a tool call and return the result."""
+        function_name = tool_call.function.name
+        
+        if function_name not in self.tool_functions:
+            return f"Error: Unknown tool '{function_name}'"
+        
+        try:
+            # Parse arguments
+            arguments = json.loads(tool_call.function.arguments)
+            
+            # Call the tool function
+            func = self.tool_functions[function_name]
+            result = await func(**arguments)
+            
+            return str(result)
+        except json.JSONDecodeError as e:
+            return f"Error parsing tool arguments: {e}"
+        except Exception as e:
+            logger.error(f"Error executing tool {function_name}: {e}")
+            return f"Error executing tool: {e}"
+    
+    def _message_to_dict(self, message: ChatCompletionMessage) -> dict:
+        """Convert a ChatCompletionMessage to a dict for the messages list."""
+        msg_dict = {
+            "role": message.role,
+            "content": message.content,
+        }
+        
+        if message.tool_calls:
+            msg_dict["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                }
+                for tc in message.tool_calls
+            ]
+        
+        return msg_dict
 
 
 def create_agent(
     system_prompt: Optional[str] = None,
     use_tools: bool = True,
-) -> AgentExecutor:
+) -> Agent:
     """
     Create an agent with optional tool support.
     
@@ -91,57 +187,49 @@ def create_agent(
         use_tools: Whether to enable MCP tools.
     
     Returns:
-        Configured agent executor.
+        Configured Agent instance.
     """
+    settings = get_settings()
+    client = create_client()
+    
     # Load default prompt if not provided
     if system_prompt is None:
         system_prompt = load_prompt("travel_guide.txt")
     
-    # Create the LLM
-    llm = create_llm(for_tools=use_tools)
-    
-    # Create prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder(variable_name="chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-    
     if use_tools:
-        # Create tool-calling agent
-        tools = get_mcp_tools()
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        
-        return AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            max_iterations=15,
-            handle_parsing_errors=True,
-        )
+        from mcp import get_tools_schema, get_tool_functions
+        tools = get_tools_schema()
+        tool_functions = get_tool_functions()
     else:
-        # For non-tool tasks, use a simpler chain
-        from langchain_core.output_parsers import StrOutputParser
-        
-        simple_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{input}"),
-        ])
-        
-        chain = simple_prompt | llm | StrOutputParser()
-        
-        # Wrap in a compatible interface
-        class SimpleAgentWrapper:
-            def __init__(self, chain):
-                self._chain = chain
-            
-            async def ainvoke(self, inputs: dict) -> dict:
-                result = await self._chain.ainvoke(inputs)
-                return {"output": result}
-            
-            def invoke(self, inputs: dict) -> dict:
-                result = self._chain.invoke(inputs)
-                return {"output": result}
-        
-        return SimpleAgentWrapper(chain)
+        tools = None
+        tool_functions = None
+    
+    return Agent(
+        client=client,
+        model=settings.llm_model,
+        system_prompt=system_prompt,
+        tools=tools,
+        tool_functions=tool_functions,
+    )
+
+
+async def simple_chat(content: str) -> str:
+    """
+    Simple chat without tools - for basic LLM calls.
+    
+    Args:
+        content: The user's message
+    
+    Returns:
+        The LLM's response
+    """
+    settings = get_settings()
+    client = create_client()
+    
+    response = await client.chat.completions.create(
+        model=settings.llm_model,
+        messages=[{"role": "user", "content": content}],
+        timeout=300,
+    )
+    
+    return response.choices[0].message.content or ""

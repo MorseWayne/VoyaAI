@@ -4,8 +4,8 @@ API Routes for VoyaAI Travel Planning Service.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from services import TravelService
@@ -136,15 +136,14 @@ async def test_endpoint(content: str):
     """
     Test endpoint for simple chat without full travel planning.
     """
-    from services.llm_factory import create_llm
+    from services.llm_factory import simple_chat
     
     try:
-        llm = create_llm(for_tools=False)
-        response = await llm.ainvoke(content)
+        response = await simple_chat(content)
         
         return {
             "input": content,
-            "response": response.content,
+            "response": response,
         }
         
     except Exception as e:

@@ -2,9 +2,7 @@
 Travel Service - Core business logic for travel planning.
 """
 import logging
-import re
 from pathlib import Path
-from typing import Optional
 from dataclasses import dataclass
 
 from .llm_factory import create_agent, load_prompt
@@ -70,12 +68,12 @@ class TravelService:
         """Generate the travel guide text using MCP tools."""
         agent = create_agent(use_tools=True)
         
-        result = await agent.ainvoke({
-            "input": requirements,
-            "chat_history": [],
-        })
+        result = await agent.run(
+            user_input=requirements,
+            chat_history=[],
+        )
         
-        return result.get("output", "")
+        return result
     
     async def _generate_html(self, guide_text: str) -> str:
         """Convert travel guide text to beautiful HTML."""
@@ -87,11 +85,11 @@ class TravelService:
             use_tools=False,
         )
         
-        result = await agent.ainvoke({
-            "input": f"请将以下旅行攻略转换为精美的HTML页面：\n\n{guide_text}",
-        })
+        result = await agent.run(
+            user_input=f"请将以下旅行攻略转换为精美的HTML页面：\n\n{guide_text}",
+        )
         
-        return result.get("output", "")
+        return result
     
     def _clean_html(self, html: str) -> str:
         """Clean HTML output from markdown code blocks."""

@@ -3,36 +3,31 @@ Application settings and configuration.
 """
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Literal
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
-    # LLM Configuration
-    llm_provider: Literal["anthropic", "openai", "google"] = Field(
-        default="anthropic",
-        description="LLM provider to use"
+    # LLM Configuration (OpenAI Compatible Proxy)
+    llm_base_url: str = Field(
+        default="http://127.0.0.1:8045/v1",
+        description="OpenAI compatible API base URL"
     )
-    
-    # Anthropic
-    anthropic_api_key: str = Field(default="", description="Anthropic API key")
-    anthropic_model: str = Field(default="claude-3-5-sonnet-20241022", description="Anthropic model name")
-    
-    # OpenAI
-    openai_api_key: str = Field(default="", description="OpenAI API key")
-    openai_model: str = Field(default="gpt-4o", description="OpenAI model name")
-    
-    # Google
-    google_api_key: str = Field(default="", description="Google API key")
-    google_model: str = Field(default="gemini-2.0-flash", description="Google model name")
+    llm_api_key: str = Field(
+        default="",
+        description="API key for the LLM service"
+    )
+    llm_model: str = Field(
+        default="gemini-3-flash",
+        description="Model name to use"
+    )
     
     # MCP Services
     amap_mcp_url: str = Field(default="", description="Amap MCP SSE URL")
     weather_mcp_url: str = Field(default="http://localhost:8083/sse", description="Weather MCP URL")
-    xhs_smithery_key: str = Field(default="", description="Xiaohongshu Smithery key")
-    xhs_profile: str = Field(default="", description="Xiaohongshu profile ID")
+    xhs_cookie: str = Field(default="", description="Xiaohongshu Cookie")
+    xhs_mcp_dir: str = Field(default="", description="Directory for jobsonlook-xhs-mcp")
     
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
