@@ -8,19 +8,12 @@ services:
     restart: unless-stopped
     init: true
     tty: true
+    # 使用宿主机网络模式，绕过 Docker 网络层的代理劫持
+    network_mode: host
     volumes:
       - ./data:/app/data
       - ./images:/app/images
     environment:
       - ROD_BROWSER_BIN=/usr/bin/google-chrome
       - COOKIES_PATH=/app/data/cookies.json
-    ports:
-      - "18060:18060"
-    # 使用真实 DNS，避免代理软件的 fake-ip 劫持
-    dns:
-      - 223.5.5.5      # 阿里 DNS
-      - 119.29.29.29   # 腾讯 DNS
-    # 添加 hosts 映射，绕过 DNS 劫持
-    extra_hosts:
-      - "www.xiaohongshu.com:81.69.116.102"
-      - "edith.xiaohongshu.com:81.69.116.102"
+    # 注意：network_mode: host 时 ports 映射不需要，服务直接监听宿主机端口
