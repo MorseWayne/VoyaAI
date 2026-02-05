@@ -11,6 +11,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 # Add project root to path
@@ -76,6 +77,11 @@ def create_app() -> FastAPI:
     
     # Include routes
     app.include_router(router)
+    
+    # Mount static files
+    if Path("static").exists():
+        app.mount("/static", StaticFiles(directory="static"), name="static")
+
     
     @app.on_event("startup")
     async def startup_event():

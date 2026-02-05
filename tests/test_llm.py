@@ -10,10 +10,10 @@ It verifies:
 4. Tool calling capability
 
 Usage:
-    python tests/test_llm.py
+    uv run python tests/test_llm.py
     
     # With custom prompt
-    python tests/test_llm.py "你好，请介绍一下自己"
+    uv run python tests/test_llm.py "你好，请介绍一下自己"
 """
 import asyncio
 import sys

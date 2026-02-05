@@ -8,13 +8,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from services import TravelService
+from services import TravelService, RouteService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Service instance
+# Service instances
 travel_service = TravelService()
+route_service = RouteService()
 
 
 class TravelRequest(BaseModel):
@@ -34,6 +35,19 @@ class TravelResponse(BaseModel):
     message: str
     guide_text: Optional[str] = None
     html_content: Optional[str] = None
+
+
+class RouteRequest(BaseModel):
+    """Route optimization request model."""
+    locations: list[str] = Field(
+        ...,
+        description="List of location names to visit",
+        min_items=2,
+        example=["Guangzhou Tower", "Baiyun Mountain", "Chimelong Safari Park"]
+    )
+    city: str = Field("", description="City context for resolving location names")
+    strategy: str = Field("driving", description="Travel strategy: driving, walking, transit")
+
 
 
 @router.get("/")
@@ -82,6 +96,30 @@ async def create_travel_plan(request: TravelRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate travel plan: {str(e)}"
+        )
+
+
+@router.post("/travel/optimize")
+async def optimize_route(request: RouteRequest):
+    """
+    Optimize travel route for a list of locations.
+    Returns optimized order, travel times, and map data.
+    """
+    try:
+        logger.info(f"Optimizing route for {len(request.locations)} locations in {request.city}")
+        
+        result = await route_service.optimize_route(request.locations, request.city)
+        
+        if "error" in result:
+             raise HTTPException(status_code=400, detail=result["error"])
+             
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error optimizing route: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to optimize route: {str(e)}"
         )
 
 
@@ -210,10 +248,10 @@ async def get_service_status():
         "weather_mcp": weather_status,
         "amap_mcp": amap_status,
         "tips": {
-            "test_llm": "python tests/test_llm.py",
-            "test_xhs": "python tests/test_xhs_mcp.py",
-            "test_weather": "python tests/test_weather_mcp.py",
-            "test_amap": "python tests/test_amap_mcp.py",
-            "test_all": "python tests/test_all.py",
+            "test_llm": "uv run python tests/test_llm.py",
+            "test_xhs": "uv run python tests/test_xhs_mcp.py",
+            "test_weather": "uv run python tests/test_weather_mcp.py",
+            "test_amap": "uv run python tests/test_amap_mcp.py",
+            "test_all": "uv run python tests/test_all.py",
         }
     }

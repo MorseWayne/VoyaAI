@@ -9,10 +9,10 @@ It verifies:
 3. Route planning and POI search work correctly
 
 Usage:
-    python tests/test_amap_mcp.py
+    uv run python tests/test_amap_mcp.py
     
     # With custom origin and destination
-    python tests/test_amap_mcp.py "北京天安门" "北京故宫"
+    uv run python tests/test_amap_mcp.py "北京天安门" "北京故宫"
 """
 import asyncio
 import sys

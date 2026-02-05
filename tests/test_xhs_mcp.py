@@ -10,10 +10,10 @@ It verifies:
 4. Search and feed operations work correctly
 
 Usage:
-    python tests/test_xhs_mcp.py
+    uv run python tests/test_xhs_mcp.py
     
     # With custom query
-    python tests/test_xhs_mcp.py "东京旅游攻略"
+    uv run python tests/test_xhs_mcp.py "东京旅游攻略"
 """
 import asyncio
 import sys

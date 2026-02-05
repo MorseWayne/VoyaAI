@@ -29,11 +29,11 @@ git clone https://github.com/MorseWayne/VoyaAI.git
 cd VoyaAI
 
 # 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows 用户: venv\Scripts\activate
+uv venv
+source .venv/bin/activate  # Windows 用户: .venv\Scripts\activate
 
 # 安装依赖
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # 配置环境
 cp .env.example .env
@@ -68,7 +68,7 @@ WEATHER_MCP_URL=http://localhost:8083/sse
 ### 运行服务器
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 服务器将运行在 `http://localhost:8182`
@@ -115,23 +115,23 @@ curl "http://localhost:8182/status"
 
 ```bash
 # 测试 LLM 连接
-python tests/test_llm.py
+uv run python tests/test_llm.py
 
 # 测试小红书 MCP
-python tests/test_xhs_mcp.py
+uv run python tests/test_xhs_mcp.py
 
 # 测试天气 MCP
-python tests/test_weather_mcp.py
+uv run python tests/test_weather_mcp.py
 
 # 测试高德地图 MCP
-python tests/test_amap_mcp.py
+uv run python tests/test_amap_mcp.py
 
 # 运行所有测试
-python tests/test_all.py
+uv run python tests/test_all.py
 
 # 只测试特定服务
-python tests/test_all.py --llm
-python tests/test_all.py --xhs
+uv run python tests/test_all.py --llm
+uv run python tests/test_all.py --xhs
 ```
 
 ## 📁 项目结构

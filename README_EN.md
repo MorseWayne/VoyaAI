@@ -29,11 +29,11 @@ git clone https://github.com/MorseWayne/VoyaAI.git
 cd VoyaAI
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
@@ -68,7 +68,7 @@ WEATHER_MCP_URL=http://localhost:8083/sse
 ### Run the Server
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 The server will start at `http://localhost:8182`

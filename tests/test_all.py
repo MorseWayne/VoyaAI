@@ -6,13 +6,13 @@ This script runs all available tests and provides a comprehensive report.
 Use this to verify the entire system is working correctly.
 
 Usage:
-    python tests/test_all.py
+    uv run python tests/test_all.py
     
     # Run only specific tests
-    python tests/test_all.py --llm        # LLM only
-    python tests/test_all.py --xhs        # Xiaohongshu only
-    python tests/test_all.py --weather    # Weather only
-    python tests/test_all.py --amap       # Amap only
+    uv run python tests/test_all.py --llm        # LLM only
+    uv run python tests/test_all.py --xhs        # Xiaohongshu only
+    uv run python tests/test_all.py --weather    # Weather only
+    uv run python tests/test_all.py --amap       # Amap only
 """
 import asyncio
 import sys

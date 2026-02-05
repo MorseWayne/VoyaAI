@@ -9,10 +9,10 @@ It verifies:
 3. Weather forecast retrieval works correctly
 
 Usage:
-    python tests/test_weather_mcp.py
+    uv run python tests/test_weather_mcp.py
     
     # With custom city and date
-    python tests/test_weather_mcp.py "北京" "2025-06-20"
+    uv run python tests/test_weather_mcp.py "北京" "2025-06-20"
 """
 import asyncio
 import sys
