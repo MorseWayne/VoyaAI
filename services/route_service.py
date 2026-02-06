@@ -133,19 +133,52 @@ class RouteService:
                 pois = data
                 
             locations = []
-            for poi in pois:
-                location_str = poi.get("location", "")
-                if "," in location_str:
-                    lng, lat = map(float, location_str.split(","))
-                    locations.append(Location(
-                        name=poi.get("name", query),
-                        lat=lat,
-                        lng=lng,
-                        address=poi.get("address", ""),
-                        city=poi.get("cityname", city)
-                    ))
             
-            return locations
+            # Helper to geocode a single POI
+            async def resolve_poi(poi):
+                loc_str = poi.get("location", "")
+                name = poi.get("name", query)
+                address = poi.get("address", "")
+                city_name = poi.get("cityname", city)
+                
+                # If no location, try geocoding address
+                if not loc_str and address:
+                    try:
+                         # Clean address: remove text in brackets
+                         clean_address = address.split('(')[0].split('（')[0]
+                         
+                         geo_res = await call_mcp_tool("amap", "maps_geo", {"address": clean_address, "city": city_name})
+                         if isinstance(geo_res, str):
+                             try:
+                                 g_data = json.loads(geo_res)
+                                 if "geocodes" in g_data and g_data["geocodes"]:
+                                     loc_str = g_data["geocodes"][0].get("location", "")
+                                 elif "results" in g_data and g_data["results"]:
+                                     loc_str = g_data["results"][0].get("location", "")
+                             except:
+                                 pass
+                    except Exception as e:
+                        logger.warning(f"Geocoding failed for {name}: {e}")
+                        pass
+                
+                if loc_str and "," in loc_str:
+                    try:
+                        lng, lat = map(float, loc_str.split(","))
+                        return Location(name=name, lat=lat, lng=lng, address=address, city=city_name)
+                    except:
+                        return None
+                return None
+
+            # Process POIs sequentially to avoid QPS limits
+            resolved_locations = []
+            for poi in pois[:5]: # Limit to top 5
+                loc = await resolve_poi(poi)
+                if loc:
+                    resolved_locations.append(loc)
+                # Small delay to be nice to API
+                await asyncio.sleep(0.1)
+            
+            return resolved_locations
             
         except Exception as e:
             logger.error(f"Error searching locations for {query}: {e}")
