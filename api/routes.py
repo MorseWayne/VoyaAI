@@ -367,29 +367,80 @@ async def search_locations_endpoint(request: LocationSearchRequest):
 
 
 @router.get("/travel/locations/tips")
-async def location_input_tips(keywords: str, city: str = ""):
+async def location_input_tips(keywords: str, city: str = "", city_search: bool = False):
     """
     Fast input tips / autocomplete for location search.
     Uses Amap Input Tips API (V3) - very fast, ideal for search-as-you-type.
     """
     from services import amap_service
     try:
-        data = await amap_service.input_tips(keywords, city=city, city_limit=bool(city))
+        # If searching for city destinations, restrict type to administrative regions
+        # 19xxxx is Place Name (地名地址信息)
+        type_code = "190100|190101|190102|190103|190104|190105" if city_search else ""
+        
+        data = await amap_service.input_tips(keywords, city=city, city_limit=bool(city), type_code=type_code)
         tips = data.get("tips", [])
+        
+        # Post-filter if strictly searching for cities
+        if city_search:
+            # We trust the type_code filter to return administrative regions.
+            # But we can prefer results that look like cities or districts.
+            # If the result list is empty after filtering, we might want to fallback to raw results.
+            
+            filtered_tips = [t for t in tips if t.get("district") == "" or "市" in t.get("name") or "区" in t.get("name") or "县" in t.get("name") or "州" in t.get("name")]
+            
+            if filtered_tips:
+                tips = filtered_tips
+            # If filtered_tips is empty, we keep the original 'tips' which are already filtered by type_code
+
+
         return [
             {
                 "name": tip.get("name", ""),
-                "address": tip.get("address", ""),
-                "location": tip.get("location", ""),
+                "address": tip.get("address", "") if isinstance(tip.get("address"), str) else "",
+                "location": tip.get("location", "") if isinstance(tip.get("location"), str) else "",
                 "district": tip.get("district", ""),
                 "city": city,
             }
             for tip in tips
-            if tip.get("name") and tip.get("location")
+            if tip.get("name") and (city_search or (isinstance(tip.get("location"), str) and tip.get("location")))
         ]
     except Exception as e:
         logger.error(f"Error getting input tips: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class GenerateTitleRequest(BaseModel):
+    cities: list[str] = Field(..., description="List of destination cities")
+    days: int = Field(1, description="Total number of days")
+
+@router.post("/travel/generate-title")
+async def generate_title(request: GenerateTitleRequest):
+    """
+    Generate a creative trip title using LLM based on destinations.
+    Falls back to a simple template if LLM is unavailable.
+    """
+    from services.llm_factory import simple_chat
+    
+    cities_str = "、".join(request.cities)
+    fallback = f"{cities_str}{request.days}日游"
+    
+    try:
+        prompt = (
+            f"请为一个旅行行程起一个简短有创意的中文标题（10字以内），"
+            f"目的地是：{cities_str}，共{request.days}天。"
+            f"只输出标题本身，不要引号、标点或其他内容。"
+        )
+        title = await simple_chat(prompt)
+        title = title.strip().strip('"\'""「」《》【】')
+        
+        if not title or len(title) > 30:
+            title = fallback
+            
+        return {"title": title}
+    except Exception as e:
+        logger.warning(f"LLM title generation failed, using fallback: {e}")
+        return {"title": fallback}
+
 
 @router.post("/travel/locations/resolve")
 async def resolve_location(request: LocationSearchRequest):

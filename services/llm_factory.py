@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Any
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall
 
@@ -33,6 +34,7 @@ def create_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
+        http_client=httpx.AsyncClient(trust_env=False),
     )
 
 

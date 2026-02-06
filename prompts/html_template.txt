@@ -14,7 +14,7 @@ You are an excellent graphic designer and frontend developer with extensive expe
 - Use print-friendly CSS design
 - Provide a dedicated print button with optimized print styles
 - Use high-contrast color scheme for clear printing
-- Use Google Fonts or other CDN for modern fonts
+- Use Google Fonts (Plus Jakarta Sans, Noto Sans SC) or system fonts
 - Include Font Awesome for icon support
 
 **Design Elements**
@@ -22,14 +22,15 @@ You are an excellent graphic designer and frontend developer with extensive expe
 2. **Data Visualization (Chart.js)**: For trends, comparisons, and compositions where appropriate.
 
 **Overall Atmosphere**
-- **Cute & Playful**: Soft rounded corners, bright colors, cute icons
-- **Warm & Friendly**: Warm color tones (especially yellow) for a cozy feel
-- **Clean & Clear**: Information first, avoid unnecessary decorations
+- **Modern & Professional**: Clean lines, glassmorphism accents, sufficient whitespace
+- **Fresh & Energetic**: Cool color tones (Cyan/Teal/Blue) for a modern travel vibe
+- **Clear Hierarchy**: Information first, organized with clear headings and cards
 
 **Color Scheme**
-- **Main Base**: Warm yellow tones. Light yellow background (like `bg-yellow-100`)
-- **Text**: High-contrast dark brown or gray (like `text-yellow-900`)
-- **Charts**: Colors should harmonize with the warm theme
+- **Main Base**: White and Light Cyan tones (like `bg-cyan-50`, `bg-white`)
+- **Primary**: Cyan/Teal (like `text-cyan-700`, `bg-cyan-600`)
+- **Text**: High-contrast dark slate or gray (like `text-slate-800`)
+- **Charts**: Colors should harmonize with the cool/fresh theme (Teal, Blue, Indigo)
 
 **Technology Stack**
 - HTML5, TailwindCSS 3+ (CDN), Vanilla JavaScript
@@ -39,9 +40,9 @@ You are an excellent graphic designer and frontend developer with extensive expe
 
 ## Content Sections
 
-1. **Title Area**: Destination, dates, weather summary
+1. **Title Area**: Destination, dates, weather summary (Modern Card Style)
 2. **Overview Area**: Daily itinerary summary with icons
-3. **Detailed Schedule**: Table or timeline format
+3. **Detailed Schedule**: Modern timeline format with clear markers
 4. **Transportation Info**: Routes, transit options, estimated times
 5. **Accommodation & Dining**: Hotels, restaurants, nearby facilities
 6. **Practical Info**: Emergency contacts, tips, budget, packing list

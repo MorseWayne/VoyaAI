@@ -115,14 +115,20 @@ async def around_search(location: str, keywords: str = "", types: str = "",
     return await _get(f"{_BASE_V5}/place/around", params)
 
 
-async def input_tips(keywords: str, city: str = "", city_limit: bool = False) -> dict:
+async def input_tips(keywords: str, city: str = "", city_limit: bool = False, type_code: str = "") -> dict:
     """
     输入提示 / 自动补全 (V3).
     Very fast, ideal for search-as-you-type.
     
     Returns: { "tips": [{"name": ..., "address": ..., "location": "lng,lat", ...}] }
     """
-    params = {"keywords": keywords, "datatype": "poi"}
+    params = {"keywords": keywords}
+    
+    # If explicitly searching for cities, restrict by POI type code for administrative regions
+    # 190100: Place Name (地名地址信息)
+    if type_code:
+        params["type"] = type_code
+        
     if city:
         params["city"] = city
     if city_limit:
