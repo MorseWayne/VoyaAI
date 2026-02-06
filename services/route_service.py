@@ -6,6 +6,7 @@ Falls back to MCP only if direct API key is not configured.
 """
 import logging
 import json
+import math
 import asyncio
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -14,6 +15,39 @@ from api.models import TransportMode, Segment, Location as ApiLocation
 from services import amap_service
 
 logger = logging.getLogger(__name__)
+
+# 出行方式的最小合理距离（单位：公里）
+# 低于此距离时，该出行方式不合理，应提示用户换其他方式
+MODE_MIN_DISTANCE_KM = {
+    "flight": 200,   # 飞机：至少 200 公里
+    "train": 50,     # 火车/高铁：至少 50 公里
+}
+
+# 出行方式的中文名称映射
+MODE_DISPLAY_NAME = {
+    "flight": "飞机",
+    "train": "火车/高铁",
+    "driving": "驾车",
+    "transit": "公交/地铁",
+    "walking": "步行",
+    "cycling": "骑行",
+    "bicycling": "骑行",
+}
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """
+    Calculate the great-circle distance between two points on Earth (Haversine formula).
+    Returns distance in kilometers.
+    """
+    R = 6371.0  # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlng / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
 
 @dataclass
 class Location:
@@ -360,7 +394,27 @@ class RouteService:
         if not origin or not dest:
             return {"error": "Could not resolve locations"}
 
-        # 2. Map mode to Amap direction API
+        # 2. Check if the transport mode is reasonable for the distance
+        straight_line_km = _haversine_km(origin.lat, origin.lng, dest.lat, dest.lng)
+        min_km = MODE_MIN_DISTANCE_KM.get(mode)
+        if min_km is not None and straight_line_km < min_km:
+            mode_name = MODE_DISPLAY_NAME.get(mode, mode)
+            suggested = []
+            if straight_line_km < 3:
+                suggested = ["步行", "骑行", "驾车"]
+            elif straight_line_km < 30:
+                suggested = ["驾车", "公交/地铁"]
+            else:
+                suggested = ["驾车", "公交/地铁"]
+            suggest_text = "、".join(suggested)
+            return {
+                "error": f"两地直线距离仅 {straight_line_km:.1f} 公里，不适合使用「{mode_name}」出行。建议选择：{suggest_text}",
+                "error_type": "mode_not_suitable",
+                "straight_line_km": round(straight_line_km, 1),
+                "mode_requested": mode,
+            }
+
+        # 3. Map mode to Amap direction API
         amap_mode = "driving"
         if mode in ["transit", "train", "flight"]:
             amap_mode = "transit"
