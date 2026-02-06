@@ -299,6 +299,20 @@ async def get_plan(plan_id: str):
         logger.error(f"Error getting plan: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.delete("/travel/plans/{plan_id}")
+async def delete_plan(plan_id: str):
+    """Delete a plan by ID."""
+    try:
+        success = storage_service.delete_plan(plan_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return {"success": True, "message": "Plan deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting plan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 class SegmentCalculationRequest(BaseModel):
     origin: str
     destination: str

@@ -36,6 +36,7 @@ class Segment(BaseModel):
 class DayPlan(BaseModel):
     day_index: int
     date: Optional[str] = None # YYYY-MM-DD
+    city: Optional[str] = None
     segments: List[Segment] = Field(default_factory=list)
 
 class Itinerary(BaseModel):
