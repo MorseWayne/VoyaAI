@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
     
     # MCP Services
-    amap_mcp_url: str = Field(default="", description="Amap MCP SSE URL")
+    amap_mcp_url: str = Field(default="", description="Amap MCP URL")
     weather_mcp_url: str = Field(default="http://localhost:8083/sse", description="Weather MCP URL")
     xhs_cookie: str = Field(default="", description="Xiaohongshu Cookie")
     xhs_mcp_dir: str = Field(default="", description="Directory for jobsonlook-xhs-mcp")
