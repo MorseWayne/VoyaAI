@@ -233,7 +233,7 @@ async def get_service_status():
     amap_status = {
         "configured": bool(settings.amap_mcp_url),
         "url": settings.amap_mcp_url[:50] + "..." if settings.amap_mcp_url and len(settings.amap_mcp_url) > 50 else settings.amap_mcp_url or "(not set)",
-        "has_key": "key=" in (settings.amap_mcp_url or "").lower(),
+        "protocol": "streamable_http" if "/mcp" in (settings.amap_mcp_url or "").lower() else "sse",
     }
     
     # Summary

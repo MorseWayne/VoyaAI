@@ -5,8 +5,9 @@ Test Script: Amap (高德地图) MCP Service
 This script tests the Amap MCP integration independently.
 It verifies:
 1. AMAP_MCP_URL environment variable is set
-2. SSE connection to Amap MCP service works
-3. Route planning and POI search work correctly
+2. MCP server can be connected via Streamable HTTP
+3. Tools can be discovered dynamically
+4. Route planning (with geocoding) and POI search work correctly
 
 Usage:
     uv run python tests/test_amap_mcp.py
@@ -17,6 +18,7 @@ Usage:
 import asyncio
 import sys
 import json
+import re
 from pathlib import Path
 
 # Add project root to path
@@ -51,256 +53,156 @@ async def test_config_check() -> tuple[bool, str, str]:
     if not (url.startswith("http://") or url.startswith("https://")):
         return False, "Invalid URL format", f"URL should start with http:// or https://: {url}"
     
-    # Check for key parameter (Amap usually requires API key)
-    if "key=" not in url.lower():
-        return False, "API key may be missing", f"Expected key= parameter in URL: {url}"
-    
     return True, "Configuration valid", f"URL: {url[:50]}..."
 
 
-async def test_sse_connection() -> tuple[bool, str, str]:
-    """Test: Connect to Amap MCP SSE endpoint."""
-    settings = get_settings()
+async def test_mcp_connection() -> tuple[bool, str, str]:
+    """Test: Try to connect to Amap MCP server."""
+    from mcp_services import get_mcp_manager
     
-    if not settings.amap_mcp_url:
-        return False, "Skipped - configuration missing", ""
+    manager = get_mcp_manager()
+    service = manager.get_service("amap")
+    
+    if not service:
+        return False, "Skipped - service not registered", ""
     
     try:
-        import httpx
-        from httpx_sse import aconnect_sse
+        logger.info(f"Connecting to Amap MCP server at {service.url[:50]}...")
         
-        logger.info(f"Connecting to Amap MCP: {settings.amap_mcp_url[:50]}...")
+        # Force refresh tools
+        service.clear_cache()
+        tools = await service.list_tools()
+        tool_names = [t["function"]["name"] for t in tools]
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async with aconnect_sse(client, "GET", settings.amap_mcp_url) as event_source:
-                events_received = []
-                endpoint_url = None
-                
-                async for event in event_source.aiter_sse():
-                    events_received.append({
-                        "event": event.event,
-                        "data": event.data[:200] if event.data else None
-                    })
-                    logger.info(f"Received SSE event: {event.event}")
-                    
-                    # Check for endpoint event (MCP protocol)
-                    if event.event == "endpoint":
-                        endpoint_url = event.data
-                        logger.info(f"Got MCP endpoint: {endpoint_url}")
-                    
-                    if len(events_received) >= 2:
-                        break
-                
-                if endpoint_url:
-                    return True, "SSE connected with MCP endpoint", f"Endpoint: {endpoint_url}"
-                elif events_received:
-                    return True, f"SSE connected, {len(events_received)} event(s)", str(events_received[0])
-                else:
-                    return False, "SSE connected but no events", ""
+        if not tools:
+            return False, "Connected but no tools found", "Server returned empty tool list"
+            
+        logger.info(f"Connected! Available tools: {tool_names}")
+        
+        return True, f"Connected, {len(tool_names)} tools available", ", ".join(tool_names)
     
-    except httpx.ConnectError as e:
-        return False, "Connection refused", f"Cannot connect to Amap MCP: {e}"
-    except httpx.TimeoutException:
-        return False, "Connection timeout", "Server did not respond within 30 seconds"
     except Exception as e:
         return False, f"Connection failed: {type(e).__name__}", str(e)
 
 
-async def test_list_tools() -> tuple[bool, str, str]:
-    """Test: List available tools from Amap MCP."""
-    settings = get_settings()
-    
-    if not settings.amap_mcp_url:
-        return False, "Skipped - configuration missing", ""
+async def get_coordinates(address: str, city: str = "") -> str | None:
+    """Helper: Get coordinates for an address using maps_geo tool."""
+    from mcp_services import call_mcp_tool
     
     try:
-        import httpx
-        from httpx_sse import aconnect_sse
+        logger.info(f"Geocoding address: {address}")
+        result = await call_mcp_tool("amap", "maps_geo", {
+            "address": address,
+            "city": city
+        })
         
-        logger.info("Listing available Amap MCP tools...")
+        # Try to parse JSON result
+        try:
+            # Clean up result if it contains non-JSON text
+            json_str = result
+            if "{" in result:
+                start = result.find("{")
+                end = result.rfind("}") + 1
+                json_str = result[start:end]
+                
+            data = json.loads(json_str)
+            if "geocodes" in data and len(data["geocodes"]) > 0:
+                location = data["geocodes"][0]["location"]
+                logger.info(f"Geocoded {address} -> {location}")
+                return location
+        except json.JSONDecodeError:
+            pass
+            
+        # Try regex if JSON parsing fails
+        match = re.search(r"(\d+\.\d+,\d+\.\d+)", result)
+        if match:
+            location = match.group(1)
+            logger.info(f"Geocoded {address} -> {location} (via regex)")
+            return location
+            
+        logger.warning(f"Could not parse coordinates from result: {result[:100]}...")
+        return None
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async with aconnect_sse(client, "GET", settings.amap_mcp_url) as event_source:
-                endpoint_url = None
-                
-                async for event in event_source.aiter_sse():
-                    if event.event == "endpoint":
-                        endpoint_url = event.data
-                        break
-                
-                if not endpoint_url:
-                    return False, "No MCP endpoint received", "Cannot list tools without endpoint"
-                
-                # Call tools/list on the MCP endpoint
-                list_request = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/list",
-                    "params": {}
-                }
-                
-                response = await client.post(endpoint_url, json=list_request, timeout=15.0)
-                
-                if response.status_code != 200:
-                    return False, f"HTTP {response.status_code}", response.text[:200]
-                
-                data = response.json()
-                
-                if "result" in data and "tools" in data["result"]:
-                    tools = data["result"]["tools"]
-                    tool_names = [t.get("name", "unknown") for t in tools]
-                    logger.info(f"Available tools: {tool_names}")
-                    return True, f"{len(tools)} tools available", ", ".join(tool_names)
-                elif "error" in data:
-                    return False, "MCP error", str(data["error"])
-                else:
-                    return False, "Unexpected response", str(data)[:200]
-    
     except Exception as e:
-        return False, f"Failed: {type(e).__name__}", str(e)
+        logger.error(f"Geocoding failed: {e}")
+        return None
 
 
 async def test_route_planning(origin: str = "北京天安门", destination: str = "北京故宫") -> tuple[bool, str, str]:
-    """Test: Plan a route using Amap MCP."""
-    settings = get_settings()
+    """Test: Plan a route using Amap MCP (with Geocoding first)."""
+    from mcp_services import call_mcp_tool
     
+    settings = get_settings()
     if not settings.amap_mcp_url:
         return False, "Skipped - configuration missing", ""
     
     try:
-        import httpx
-        from httpx_sse import aconnect_sse
-        
+        # Step 1: Geocode Origin and Destination
         logger.info(f"Planning route: {origin} → {destination}")
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with aconnect_sse(client, "GET", settings.amap_mcp_url) as event_source:
-                endpoint_url = None
-                
-                async for event in event_source.aiter_sse():
-                    if event.event == "endpoint":
-                        endpoint_url = event.data
-                        break
-                
-                if not endpoint_url:
-                    return False, "No MCP endpoint received", ""
-                
-                # Try common Amap tool names for route planning
-                tool_names_to_try = [
-                    "maps_direction_transit",
-                    "maps_direction_driving", 
-                    "direction_transit",
-                    "direction",
-                    "route",
-                    "plan_route",
-                ]
-                
-                for tool_name in tool_names_to_try:
-                    try:
-                        call_request = {
-                            "jsonrpc": "2.0",
-                            "id": 2,
-                            "method": "tools/call",
-                            "params": {
-                                "name": tool_name,
-                                "arguments": {
-                                    "origin": origin,
-                                    "destination": destination,
-                                }
-                            }
-                        }
-                        
-                        logger.debug(f"Trying tool: {tool_name}")
-                        response = await client.post(endpoint_url, json=call_request, timeout=30.0)
-                        data = response.json()
-                        
-                        if "result" in data:
-                            result_content = str(data["result"])[:500]
-                            logger.info(f"Tool {tool_name} succeeded")
-                            return True, f"Route planned via {tool_name}", result_content
-                        elif "error" in data:
-                            error_msg = str(data["error"])
-                            if "unknown tool" not in error_msg.lower() and "not found" not in error_msg.lower():
-                                return False, f"Tool error: {tool_name}", error_msg[:200]
-                    except Exception as e:
-                        logger.debug(f"Tool {tool_name} failed: {e}")
-                        continue
-                
-                return False, "No route planning tool found", f"Tried: {', '.join(tool_names_to_try)}"
-    
+        origin_loc = await get_coordinates(origin, "北京")
+        dest_loc = await get_coordinates(destination, "北京")
+        
+        if not origin_loc:
+            return False, "Geocoding failed for origin", f"Could not get coordinates for {origin}"
+        if not dest_loc:
+            return False, "Geocoding failed for destination", f"Could not get coordinates for {destination}"
+            
+        # Step 2: Call Direction API
+        tool_name = "maps_direction_driving"
+        logger.info(f"Using tool: {tool_name} with {origin_loc} -> {dest_loc}")
+        
+        params = {
+            "origin": origin_loc,
+            "destination": dest_loc,
+        }
+        
+        result = await call_mcp_tool("amap", tool_name, params)
+        
+        if result.startswith("Error") or "API 调用失败" in result:
+            return False, "Route planning failed", result
+            
+        if len(result) < 50:
+             return False, "Result too short", result
+             
+        return True, "Route planned successfully", result[:500]
+
     except Exception as e:
-        return False, f"Failed: {type(e).__name__}", str(e)
+        return False, f"Route planning failed: {type(e).__name__}", str(e)
 
 
 async def test_poi_search(keyword: str = "餐厅", city: str = "北京") -> tuple[bool, str, str]:
     """Test: Search for POI using Amap MCP."""
-    settings = get_settings()
+    from mcp_services import call_mcp_tool
     
+    settings = get_settings()
     if not settings.amap_mcp_url:
         return False, "Skipped - configuration missing", ""
     
     try:
-        import httpx
-        from httpx_sse import aconnect_sse
-        
         logger.info(f"Searching POI: {keyword} in {city}")
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with aconnect_sse(client, "GET", settings.amap_mcp_url) as event_source:
-                endpoint_url = None
-                
-                async for event in event_source.aiter_sse():
-                    if event.event == "endpoint":
-                        endpoint_url = event.data
-                        break
-                
-                if not endpoint_url:
-                    return False, "No MCP endpoint received", ""
-                
-                # Try common Amap tool names for POI search
-                tool_names_to_try = [
-                    "maps_search_poi",
-                    "search_poi",
-                    "poi_search",
-                    "places_search",
-                    "search",
-                ]
-                
-                for tool_name in tool_names_to_try:
-                    try:
-                        call_request = {
-                            "jsonrpc": "2.0",
-                            "id": 3,
-                            "method": "tools/call",
-                            "params": {
-                                "name": tool_name,
-                                "arguments": {
-                                    "keyword": keyword,
-                                    "city": city,
-                                }
-                            }
-                        }
-                        
-                        logger.debug(f"Trying tool: {tool_name}")
-                        response = await client.post(endpoint_url, json=call_request, timeout=30.0)
-                        data = response.json()
-                        
-                        if "result" in data:
-                            result_content = str(data["result"])[:500]
-                            logger.info(f"Tool {tool_name} succeeded")
-                            return True, f"POI search via {tool_name}", result_content
-                        elif "error" in data:
-                            error_msg = str(data["error"])
-                            if "unknown tool" not in error_msg.lower() and "not found" not in error_msg.lower():
-                                return False, f"Tool error: {tool_name}", error_msg[:200]
-                    except Exception as e:
-                        logger.debug(f"Tool {tool_name} failed: {e}")
-                        continue
-                
-                return False, "No POI search tool found", f"Tried: {', '.join(tool_names_to_try)}"
-    
+        # Use maps_text_search for keyword search
+        tool_name = "maps_text_search"
+        logger.info(f"Using tool: {tool_name}")
+        
+        params = {
+            "keywords": keyword, # Note: parameter is 'keywords' plural
+            "city": city
+        }
+        
+        result = await call_mcp_tool("amap", tool_name, params)
+        
+        if result.startswith("Error") or "API 调用失败" in result:
+            return False, "POI search failed", result
+            
+        if len(result) < 50:
+             return False, "Result too short", result
+             
+        return True, "POI found successfully", result[:500]
+
     except Exception as e:
-        return False, f"Failed: {type(e).__name__}", str(e)
+        return False, f"POI search failed: {type(e).__name__}", str(e)
 
 
 async def run_all_tests(origin: str = "北京天安门", destination: str = "北京故宫"):
@@ -318,16 +220,12 @@ async def run_all_tests(origin: str = "北京天安门", destination: str = "北
     
     if result.status != TestStatus.SUCCESS:
         print("\n⚠️  Skipping remaining tests due to configuration issues.")
-        print("\nTo configure Amap MCP:")
-        print("  1. Get an API key from https://console.amap.com/")
-        print("  2. Set AMAP_MCP_URL in your .env file")
-        print("     Example: https://mcp.amap.com/sse?key=YOUR_API_KEY")
         print_summary(results)
         return results
     
-    # Test 2: SSE Connection
-    print_section("Test 2: SSE Connection")
-    result = await run_test("SSE Connection", test_sse_connection)
+    # Test 2: Connection & Discovery
+    print_section("Test 2: MCP Connection & Tool Discovery")
+    result = await run_test("MCP Connection", test_mcp_connection)
     print_result(result)
     results.append(result)
     
@@ -336,21 +234,15 @@ async def run_all_tests(origin: str = "北京天安门", destination: str = "北
         print_summary(results)
         return results
     
-    # Test 3: List Tools
-    print_section("Test 3: List Available Tools")
-    result = await run_test("List Tools", test_list_tools)
+    # Test 3: POI Search
+    print_section("Test 3: POI Search")
+    result = await run_test("POI Search", test_poi_search)
     print_result(result)
     results.append(result)
     
     # Test 4: Route Planning
-    print_section(f"Test 4: Route Planning ({origin} → {destination})")
+    print_section("Test 4: Route Planning")
     result = await run_test("Route Planning", test_route_planning, origin, destination)
-    print_result(result)
-    results.append(result)
-    
-    # Test 5: POI Search
-    print_section("Test 5: POI Search (餐厅 in 北京)")
-    result = await run_test("POI Search", test_poi_search, "餐厅", "北京")
     print_result(result)
     results.append(result)
     
@@ -359,7 +251,6 @@ async def run_all_tests(origin: str = "北京天安门", destination: str = "北
 
 
 if __name__ == "__main__":
-    # Get origin and destination from command line if provided
     origin = sys.argv[1] if len(sys.argv) > 1 else "北京天安门"
     destination = sys.argv[2] if len(sys.argv) > 2 else "北京故宫"
     
