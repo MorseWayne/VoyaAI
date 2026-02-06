@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from config import get_settings
 from services import TravelService, RouteService
+from services.storage_service import StorageService
+from api.models import Itinerary, Segment, TransportMode
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,6 +19,7 @@ router = APIRouter()
 # Service instances
 travel_service = TravelService()
 route_service = RouteService()
+storage_service = StorageService()
 
 
 class TravelRequest(BaseModel):
@@ -54,8 +57,8 @@ class RouteRequest(BaseModel):
 
 @router.get("/")
 async def root():
-    """Root endpoint redirects to Route Planner."""
-    return RedirectResponse(url="/static/planner.html")
+    """Root endpoint redirects to Landing Page."""
+    return RedirectResponse(url="/static/index.html")
 
 
 @router.get("/health")
@@ -260,3 +263,113 @@ async def get_service_status():
             "test_all": "uv run python tests/test_all.py",
         }
     }
+
+
+# --- Itinerary / Plan Management Endpoints ---
+
+@router.post("/travel/plans", response_model=Itinerary)
+async def save_plan(plan: Itinerary):
+    """Save or update a travel plan."""
+    try:
+        return storage_service.save_plan(plan)
+    except Exception as e:
+        logger.error(f"Error saving plan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/travel/plans", response_model=list[Itinerary])
+async def list_plans():
+    """List all saved plans."""
+    try:
+        return storage_service.list_plans()
+    except Exception as e:
+        logger.error(f"Error listing plans: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/travel/plans/{plan_id}", response_model=Itinerary)
+async def get_plan(plan_id: str):
+    """Get a specific plan by ID."""
+    try:
+        plan = storage_service.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return plan
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting plan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SegmentCalculationRequest(BaseModel):
+    origin: str
+    destination: str
+    mode: str = "driving"
+    city: str = ""
+
+@router.post("/travel/calculate-segment")
+async def calculate_segment(request: SegmentCalculationRequest):
+    """
+    Calculate distance, duration, and cost for a segment.
+    Used when user edits a card and selects transport.
+    """
+    try:
+        result = await route_service.calculate_segment(
+            request.origin, 
+            request.destination, 
+            request.mode, 
+            request.city
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except Exception as e:
+        logger.error(f"Error calculating segment: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class LocationSearchRequest(BaseModel):
+    query: str
+    city: str = ""
+
+@router.post("/travel/locations/search")
+async def search_locations_endpoint(request: LocationSearchRequest):
+    """
+    Search for locations matching a query.
+    Returns a list of candidates.
+    """
+    try:
+        locations = await route_service.search_locations(request.query, request.city)
+        return [
+            {
+                "name": loc.name,
+                "lat": loc.lat,
+                "lng": loc.lng,
+                "address": loc.address,
+                "city": loc.city
+            }
+            for loc in locations
+        ]
+    except Exception as e:
+        logger.error(f"Error searching locations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/travel/locations/resolve")
+async def resolve_location(request: LocationSearchRequest):
+    """
+    Resolve a location name to coordinates and address.
+    """
+    try:
+        result = await route_service.get_location_details(request.query, request.city)
+        if not result:
+            raise HTTPException(status_code=404, detail="Location not found")
+            
+        return {
+            "name": result.name,
+            "lat": result.lat,
+            "lng": result.lng,
+            "address": result.address,
+            "city": result.city
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resolving location: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

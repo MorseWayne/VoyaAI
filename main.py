@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import get_settings
-from api import router
+from api.routes import router
 
 # Configure logging
 logging.basicConfig(

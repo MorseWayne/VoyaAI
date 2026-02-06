@@ -6,6 +6,7 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from api.models import TransportMode, Segment, Location as ApiLocation
 
 from mcp_services.clients import call_mcp_tool
 
@@ -26,6 +27,7 @@ class RouteSegment:
     distance_km: float
     duration_minutes: float
     strategy: str = "driving"
+    steps: List[str] = None
 
 class RouteService:
     """
@@ -111,6 +113,44 @@ class RouteService:
             logger.error(f"Error getting location details for {place_name}: {e}")
             return None
 
+    async def search_locations(self, query: str, city: str = "") -> List[Location]:
+        """
+        Search for locations matching a query and return a list of candidates.
+        """
+        try:
+            result = await call_mcp_tool("amap", "maps_text_search", {"keywords": query, "city": city})
+            
+            if isinstance(result, str):
+                try:
+                    data = json.loads(result)
+                except json.JSONDecodeError:
+                    return []
+            else:
+                data = result
+                
+            pois = data.get("pois", []) if isinstance(data, dict) else []
+            if not pois and isinstance(data, list):
+                pois = data
+                
+            locations = []
+            for poi in pois:
+                location_str = poi.get("location", "")
+                if "," in location_str:
+                    lng, lat = map(float, location_str.split(","))
+                    locations.append(Location(
+                        name=poi.get("name", query),
+                        lat=lat,
+                        lng=lng,
+                        address=poi.get("address", ""),
+                        city=poi.get("cityname", city)
+                    ))
+            
+            return locations
+            
+        except Exception as e:
+            logger.error(f"Error searching locations for {query}: {e}")
+            return []
+
     async def get_travel_route(self, origin: Location, destination: Location, mode: str = "driving") -> Optional[RouteSegment]:
         """
         Get travel time and distance between two points.
@@ -162,11 +202,20 @@ class RouteService:
             distance = 0
             duration = 0
             detailed_mode = mode
+            steps = []
 
             if paths:
                 path = paths[0]
                 distance = float(path.get("distance", 0)) / 1000.0 # meters to km
                 duration = float(path.get("duration", 0)) / 60.0 # seconds to minutes
+                
+                # Extract driving/walking steps
+                if "steps" in path:
+                    for step in path["steps"]:
+                        instr = step.get("instruction", "")
+                        if instr:
+                            steps.append(instr)
+                            
             elif transits:
                 path = transits[0]
                 # Distance might be at top level for transit
@@ -181,16 +230,34 @@ class RouteService:
                 segments_list = path.get("segments", [])
                 modes_found = []
                 for seg in segments_list:
+                    # Walking part
+                    if seg.get("walking", {}).get("distance"):
+                         walk_dist = seg["walking"]["distance"]
+                         steps.append(f"步行 {walk_dist}米")
+                    
+                    # Bus/Train part
                     if seg.get("bus", {}).get("buslines"):
-                        line = seg["bus"]["buslines"][0]["name"]
+                        line = seg["bus"]["buslines"][0]
+                        line_name = line["name"]
+                        dep = line.get("departure_stop", {}).get("name", "起点")
+                        arr = line.get("arrival_stop", {}).get("name", "终点")
+                        
                         # Simplify name, e.g. "Metro Line 1 (X to Y)" -> "Metro Line 1"
-                        line_name = line.split("(")[0].strip()
-                        if line_name not in modes_found:
-                            modes_found.append(line_name)
+                        simple_name = line_name.split("(")[0].strip()
+                        if simple_name not in modes_found:
+                            modes_found.append(simple_name)
+                            
+                        steps.append(f"乘坐 {simple_name} ({dep} 上车, {arr} 下车)")
+                            
                     elif seg.get("railway", {}).get("name"):
                         r_name = seg["railway"]["name"]
+                        dep = seg["railway"].get("departure_stop", {}).get("name", "")
+                        arr = seg["railway"].get("arrival_stop", {}).get("name", "")
+                        
                         if r_name not in modes_found:
                             modes_found.append(r_name)
+                        
+                        steps.append(f"乘坐 {r_name} ({dep} -> {arr})")
                 
                 if modes_found:
                     detailed_mode = " + ".join(modes_found)
@@ -203,7 +270,8 @@ class RouteService:
                     destination=destination,
                     distance_km=distance,
                     duration_minutes=duration,
-                    strategy=detailed_mode
+                    strategy=detailed_mode,
+                    steps=steps
                 )
             
             return None
@@ -331,4 +399,66 @@ class RouteService:
             "segments": segments,
             "total_distance_km": f"{total_dist:.1f}",
             "total_duration_hours": f"{total_time/60:.1f}"
+        }
+
+    async def calculate_segment(self, origin_name: str, dest_name: str, mode: str, city: str = "") -> Dict[str, Any]:
+        """
+        Calculate details for a segment (distance, duration, cost).
+        """
+        # 1. Resolve locations
+        origin = await self.get_location_details(origin_name, city)
+        dest = await self.get_location_details(dest_name, city)
+        
+        if not origin or not dest:
+            return {"error": "Could not resolve locations"}
+
+        # 2. Get route
+        # Map mode to AMap tools
+        # mode: flight, train, driving, cycling, walking, transit
+        
+        amap_mode = "driving"
+        if mode in ["transit", "train", "flight"]:
+            amap_mode = "transit"
+        elif mode == "walking":
+            amap_mode = "walking"
+        elif mode == "cycling":
+            amap_mode = "bicycling"
+            
+        segment = await self.get_travel_route(origin, dest, mode=amap_mode)
+        
+        if not segment:
+            return {"error": "Could not calculate route"}
+            
+        # 3. Estimate cost (Heuristics)
+        cost = 0.0
+        dist = segment.distance_km
+        
+        if mode == "driving":
+            # Approx Taxi ~3-4 CNY/km
+            cost = max(10, dist * 3.5)
+        elif mode == "transit":
+             # City transit
+             if dist < 20:
+                 cost = 2.0 + (dist // 5) * 1 # Rough metro pricing
+             else:
+                 cost = dist * 0.5 # Intercity bus/slow train
+        elif mode == "flight":
+             # Rough: 0.8 CNY/km + 150 base
+             cost = 150 + dist * 0.8
+        elif mode == "train":
+             # High speed: 0.5 CNY/km
+             cost = dist * 0.5
+        elif mode in ["walking", "cycling"]:
+             cost = 0.0
+             
+        return {
+            "origin": {"name": origin.name, "lat": origin.lat, "lng": origin.lng, "address": origin.address, "city": origin.city},
+            "destination": {"name": dest.name, "lat": dest.lat, "lng": dest.lng, "address": dest.address, "city": dest.city},
+            "distance_km": round(segment.distance_km, 2),
+            "duration_minutes": int(segment.duration_minutes),
+            "cost_estimate": int(cost),
+            "mode": mode,
+            "details": {
+                "transit_steps": segment.steps
+            }
         }
