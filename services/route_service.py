@@ -212,7 +212,7 @@ class RouteService:
             logger.error(f"Error getting route from {origin.name} to {destination.name}: {e}")
             return None
 
-    async def optimize_route(self, locations: List[str], city: str = "", strategy: str = "driving") -> Dict[str, Any]:
+    async def optimize_route(self, locations: List[str], city: str = "", strategy: str = "driving", preference: str = "time") -> Dict[str, Any]:
         """
         Take a list of location names, resolve them, and reorder for optimal travel.
         Internal logic:
@@ -277,18 +277,32 @@ class RouteService:
                 
                 d_res, t_res = await asyncio.gather(seg_driving_task, seg_transit_task)
                 
-                # Logic: Pick fastest. If similar (within 10%), prefer transit to save carbon? 
-                # Or just strictly fastest.
-                # Let's say strictly fastest for now.
+                # Decision logic based on preference
                 if d_res and t_res:
-                    if d_res.duration_minutes <= t_res.duration_minutes:
+                    if preference == "distance":
+                        # Prefer shorter distance
+                        if d_res.distance_km <= t_res.distance_km:
+                            segment = d_res
+                        else:
+                            segment = t_res
+                    elif preference == "transit_first":
+                        # Prefer transit if available
+                        segment = t_res
+                    elif preference == "driving_first":
+                        # Prefer driving if available
                         segment = d_res
                     else:
-                        segment = t_res
+                        # Default "time": Prefer faster duration
+                        if d_res.duration_minutes <= t_res.duration_minutes:
+                            segment = d_res
+                        else:
+                            segment = t_res
                 elif d_res:
                     segment = d_res
                 elif t_res:
                     segment = t_res
+                else:
+                    segment = None
             else:
                 segment = await self.get_travel_route(path[i], path[i+1], mode=strategy)
 

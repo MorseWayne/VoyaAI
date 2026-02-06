@@ -48,6 +48,7 @@ class RouteRequest(BaseModel):
     )
     city: str = Field("", description="City context for resolving location names")
     strategy: str = Field("driving", description="Travel strategy: driving, walking, transit")
+    preference: str = Field("time", description="Optimization preference: time, distance, transit_first, driving_first")
 
 
 
@@ -104,9 +105,9 @@ async def optimize_route(request: RouteRequest):
     Returns optimized order, travel times, and map data.
     """
     try:
-        logger.info(f"Optimizing route for {len(request.locations)} locations in {request.city} with strategy {request.strategy}")
+        logger.info(f"Optimizing route for {len(request.locations)} locations in {request.city} with strategy {request.strategy}, preference {request.preference}")
         
-        result = await route_service.optimize_route(request.locations, request.city, request.strategy)
+        result = await route_service.optimize_route(request.locations, request.city, request.strategy, request.preference)
         
         if "error" in result:
              raise HTTPException(status_code=400, detail=result["error"])
