@@ -233,11 +233,11 @@ async def get_service_status():
         "url": settings.weather_mcp_url or "(not set)",
     }
     
-    # Check Amap MCP
+    # Check Amap API (direct REST API, no longer MCP)
     amap_status = {
-        "configured": bool(settings.amap_mcp_url),
-        "url": settings.amap_mcp_url[:50] + "..." if settings.amap_mcp_url and len(settings.amap_mcp_url) > 50 else settings.amap_mcp_url or "(not set)",
-        "protocol": "streamable_http" if "/mcp" in (settings.amap_mcp_url or "").lower() else "sse",
+        "configured": bool(settings.amap_api_key),
+        "mode": "direct_api" if settings.amap_api_key else ("mcp_legacy" if settings.amap_mcp_url else "not_configured"),
+        "api_key": "***" + settings.amap_api_key[-4:] if len(settings.amap_api_key) > 4 else "(not set)",
     }
     
     # Summary
@@ -347,7 +347,7 @@ class LocationSearchRequest(BaseModel):
 async def search_locations_endpoint(request: LocationSearchRequest):
     """
     Search for locations matching a query.
-    Returns a list of candidates.
+    Returns a list of candidates using Amap POI text search.
     """
     try:
         locations = await route_service.search_locations(request.query, request.city)
@@ -363,6 +363,32 @@ async def search_locations_endpoint(request: LocationSearchRequest):
         ]
     except Exception as e:
         logger.error(f"Error searching locations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/travel/locations/tips")
+async def location_input_tips(keywords: str, city: str = ""):
+    """
+    Fast input tips / autocomplete for location search.
+    Uses Amap Input Tips API (V3) - very fast, ideal for search-as-you-type.
+    """
+    from services import amap_service
+    try:
+        data = await amap_service.input_tips(keywords, city=city, city_limit=bool(city))
+        tips = data.get("tips", [])
+        return [
+            {
+                "name": tip.get("name", ""),
+                "address": tip.get("address", ""),
+                "location": tip.get("location", ""),
+                "district": tip.get("district", ""),
+                "city": city,
+            }
+            for tip in tips
+            if tip.get("name") and tip.get("location")
+        ]
+    except Exception as e:
+        logger.error(f"Error getting input tips: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/travel/locations/resolve")
