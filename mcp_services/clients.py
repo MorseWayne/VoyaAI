@@ -148,6 +148,18 @@ class MCPService:
             logger.error(f"[{self.name}] ❌ Request timeout")
             return f"{self.name} request timed out."
         except Exception as e:
+            # Handle ExceptionGroup (common in Python 3.11+ asyncio)
+            if type(e).__name__ == 'ExceptionGroup':
+                import traceback
+                error_details = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+                logger.error(f"[{self.name}] ❌ Failed to call tool (ExceptionGroup): {e}")
+                logger.debug(f"[{self.name}] Traceback: {error_details}")
+                
+                # Try to extract the first meaningful error
+                if hasattr(e, 'exceptions') and e.exceptions:
+                    first_error = e.exceptions[0]
+                    return f"Error calling {self.name}: {str(first_error)}"
+            
             logger.error(f"[{self.name}] ❌ Failed to call tool: {type(e).__name__}: {e}")
             return f"Error calling {self.name}: {str(e)}"
     

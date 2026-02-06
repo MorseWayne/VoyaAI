@@ -39,7 +39,8 @@ class RouteService:
         try:
             # Try specific tool names known for AMap MCP
             # Based on tests/test_amap_mcp.py
-            result = await call_mcp_tool("amap", "search_poi", {"keyword": place_name, "city": city})
+            # Updated to use correct tool name "maps_text_search" and parameter "keywords"
+            result = await call_mcp_tool("amap", "maps_text_search", {"keywords": place_name, "city": city})
             
             # Parse result - expecting a JSON string or dict
             # The MCP client returns a string, usually JSON representation
@@ -65,6 +66,34 @@ class RouteService:
             if pois:
                 top_poi = pois[0]
                 location_str = top_poi.get("location", "")
+                
+                # If location is missing but we have an address, try geocoding
+                if not location_str and top_poi.get("address"):
+                    address = top_poi.get("address")
+                    # If address is a list (some APIs do this), join it
+                    if isinstance(address, list):
+                        address = "".join(str(x) for x in address)
+                        
+                    if address:
+                        logger.info(f"POI found but no location. Geocoding address: {address}")
+                        try:
+                            geo_result = await call_mcp_tool("amap", "maps_geo", {"address": address, "city": city})
+                            if isinstance(geo_result, str):
+                                try:
+                                    geo_data = json.loads(geo_result)
+                                    # Check for 'geocodes' (standard API) or 'results' (observed in MCP)
+                                    if "geocodes" in geo_data and geo_data["geocodes"]:
+                                        location_str = geo_data["geocodes"][0].get("location", "")
+                                    elif "results" in geo_data and geo_data["results"]:
+                                        location_str = geo_data["results"][0].get("location", "")
+                                        
+                                    if location_str:
+                                        logger.info(f"Geocoding success: {location_str}")
+                                except json.JSONDecodeError:
+                                    pass
+                        except Exception as e:
+                            logger.error(f"Geocoding failed during fallback: {e}")
+
                 if "," in location_str:
                     lng, lat = map(float, location_str.split(","))
                     return Location(
@@ -92,13 +121,27 @@ class RouteService:
             dest_coords = f"{destination.lng},{destination.lat}"
             
             # Map mode to tool
-            tool_name = "direction_driving" if mode == "driving" else "direction_transit"
+            tool_name = "maps_direction_driving"
+            if mode == "transit":
+                tool_name = "maps_direction_transit_integrated"
+            elif mode == "walking":
+                tool_name = "maps_direction_walking"
+            elif mode == "bicycling":
+                tool_name = "maps_direction_bicycling"
             
-            result = await call_mcp_tool("amap", tool_name, {
+            params = {
                 "origin": origin_coords,
                 "destination": dest_coords
-            })
+            }
+            if mode == "transit":
+                # Transit requires city usually, but AMap might infer or we pass origin city
+                params["city"] = origin.city or "北京" 
+                params["cityd"] = destination.city or "北京"
+
+            result = await call_mcp_tool("amap", tool_name, params)
             
+            logger.info(f"DEBUG: MCP Tool {tool_name} Result: {result[:500] if isinstance(result, str) else str(result)[:500]}")
+
             if isinstance(result, str):
                 try:
                     data = json.loads(result)
@@ -109,20 +152,58 @@ class RouteService:
                 data = result
 
             # Parse AMap direction response
-            route = data.get("route", {})
-            paths = route.get("paths", [])
+            # Sometimes 'route' is top level, sometimes inside 'route' key depending on tool
+            route_data = data.get("route", data) 
+            paths = route_data.get("paths", [])
+            transits = route_data.get("transits", [])
             
+            logger.info(f"DEBUG: Parsed Route Data - Paths: {len(paths)}, Transits: {len(transits)}")
+            
+            distance = 0
+            duration = 0
+            detailed_mode = mode
+
             if paths:
                 path = paths[0]
                 distance = float(path.get("distance", 0)) / 1000.0 # meters to km
                 duration = float(path.get("duration", 0)) / 60.0 # seconds to minutes
+            elif transits:
+                path = transits[0]
+                # Distance might be at top level for transit
+                dist_val = float(path.get("distance", 0))
+                if dist_val == 0:
+                    dist_val = float(data.get("distance", 0))
                 
+                distance = dist_val / 1000.0
+                duration = float(path.get("duration", 0)) / 60.0
+                
+                # Extract detailed transit info
+                segments_list = path.get("segments", [])
+                modes_found = []
+                for seg in segments_list:
+                    if seg.get("bus", {}).get("buslines"):
+                        line = seg["bus"]["buslines"][0]["name"]
+                        # Simplify name, e.g. "Metro Line 1 (X to Y)" -> "Metro Line 1"
+                        line_name = line.split("(")[0].strip()
+                        if line_name not in modes_found:
+                            modes_found.append(line_name)
+                    elif seg.get("railway", {}).get("name"):
+                        r_name = seg["railway"]["name"]
+                        if r_name not in modes_found:
+                            modes_found.append(r_name)
+                
+                if modes_found:
+                    detailed_mode = " + ".join(modes_found)
+                else:
+                    detailed_mode = "Transit"
+
+            if paths or transits:
                 return RouteSegment(
                     origin=origin,
                     destination=destination,
                     distance_km=distance,
                     duration_minutes=duration,
-                    strategy=mode
+                    strategy=detailed_mode
                 )
             
             return None
@@ -131,7 +212,7 @@ class RouteService:
             logger.error(f"Error getting route from {origin.name} to {destination.name}: {e}")
             return None
 
-    async def optimize_route(self, locations: List[str], city: str = "") -> Dict[str, Any]:
+    async def optimize_route(self, locations: List[str], city: str = "", strategy: str = "driving") -> Dict[str, Any]:
         """
         Take a list of location names, resolve them, and reorder for optimal travel.
         Internal logic:
@@ -188,7 +269,29 @@ class RouteService:
         # 3. Calculate full route details accurately
         final_route_details = []
         for i in range(len(path) - 1):
-            segment = await self.get_travel_route(path[i], path[i+1])
+            segment = None
+            if strategy in ["smart", "best", "recommend"]:
+                # Compare driving and transit
+                seg_driving_task = self.get_travel_route(path[i], path[i+1], mode="driving")
+                seg_transit_task = self.get_travel_route(path[i], path[i+1], mode="transit")
+                
+                d_res, t_res = await asyncio.gather(seg_driving_task, seg_transit_task)
+                
+                # Logic: Pick fastest. If similar (within 10%), prefer transit to save carbon? 
+                # Or just strictly fastest.
+                # Let's say strictly fastest for now.
+                if d_res and t_res:
+                    if d_res.duration_minutes <= t_res.duration_minutes:
+                        segment = d_res
+                    else:
+                        segment = t_res
+                elif d_res:
+                    segment = d_res
+                elif t_res:
+                    segment = t_res
+            else:
+                segment = await self.get_travel_route(path[i], path[i+1], mode=strategy)
+
             if segment:
                 segments.append({
                     "from": path[i].name,

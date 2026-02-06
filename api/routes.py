@@ -104,9 +104,9 @@ async def optimize_route(request: RouteRequest):
     Returns optimized order, travel times, and map data.
     """
     try:
-        logger.info(f"Optimizing route for {len(request.locations)} locations in {request.city}")
+        logger.info(f"Optimizing route for {len(request.locations)} locations in {request.city} with strategy {request.strategy}")
         
-        result = await route_service.optimize_route(request.locations, request.city)
+        result = await route_service.optimize_route(request.locations, request.city, request.strategy)
         
         if "error" in result:
              raise HTTPException(status_code=400, detail=result["error"])
