@@ -338,194 +338,42 @@ async function deletePlan(planId) {
 }
 
 async function createNewPlan() {
-    // Reset and Show Wizard
     document.getElementById('create-title').value = '';
     document.getElementById('create-date').valueAsDate = new Date();
-    document.getElementById('create-dest-list').innerHTML = '';
-    
-    // Add one default item
-    addDestinationItem();
-    
+    document.getElementById('create-days').value = 1;
     showView('create-plan');
-}
-
-let citySearchDebounce = null;
-
-function addDestinationItem() {
-    const list = document.getElementById('create-dest-list');
-    const id = 'dest-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
-    
-    const div = document.createElement('div');
-    div.className = 'flex gap-3 items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm group animate-fade-in relative z-10'; // Added relative for z-index
-    div.innerHTML = `
-        <div class="cursor-move text-slate-300 hover:text-slate-500 px-2">
-            <i class="fas fa-grip-vertical"></i>
-        </div>
-        <div class="flex-grow relative">
-            <input type="text" 
-                   placeholder="输入城市/目的地 (如: 成都)" 
-                   class="dest-city w-full outline-none text-slate-700 font-medium placeholder:font-normal placeholder:text-slate-300" 
-                   oninput="handleDestinationCitySearch(this, '${id}-results')"
-                   onfocus="handleDestinationCitySearch(this, '${id}-results')"
-                   onblur="setTimeout(() => document.getElementById('${id}-results').classList.add('hidden'), 200)"
-                   autocomplete="off">
-            <div id="${id}-results" class="absolute top-full left-0 w-full bg-white shadow-xl rounded-xl border border-slate-100 z-50 hidden max-h-60 overflow-y-auto mt-2">
-                <!-- Search Results -->
-            </div>
-        </div>
-        <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
-            <input type="number" value="1" min="1" max="30" class="dest-days w-12 bg-transparent outline-none text-center font-bold text-cyan-600" onchange="updateTotalDays()">
-            <span class="text-xs text-slate-400">天</span>
-        </div>
-        <button onclick="this.parentElement.remove(); updateTotalDays()" class="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
-            <i class="fas fa-trash-alt"></i>
-        </button>
-    `;
-    
-    // Fix z-index stacking context for dropdowns
-    // Newer items should be on top? No, dropdowns need to float over subsequent items.
-    // CSS grid/flex layout usually handles z-index by order. 
-    // We might need to manually set z-index descending if they overlap.
-    // For now, let's hope absolute positioning works well. 
-    // Actually, subsequent relative items will cover the dropdown of previous items if z-index is not handled.
-    // Let's set a diminishing z-index based on child count to be safe, or just high z-index on hover/focus.
-    // A simple fix is setting style.zIndex on the container when input is focused.
-    const input = div.querySelector('input');
-    input.addEventListener('focus', () => { div.style.zIndex = 100; });
-    input.addEventListener('blur', () => { setTimeout(() => div.style.zIndex = 10, 200); });
-
-    list.appendChild(div);
-    updateTotalDays();
-}
-
-function handleDestinationCitySearch(input, resultsId) {
-    const resultsDiv = document.getElementById(resultsId);
-    const keyword = input.value.trim();
-    
-    if (!keyword) {
-        resultsDiv.classList.add('hidden');
-        return;
-    }
-    
-    if (citySearchDebounce) clearTimeout(citySearchDebounce);
-    
-    citySearchDebounce = setTimeout(async () => {
-        try {
-            resultsDiv.innerHTML = '<div class="p-3 text-center text-slate-400 text-xs"><i class="fas fa-spinner fa-spin"></i> 搜索中...</div>';
-            resultsDiv.classList.remove('hidden');
-            
-            // Call API with city_search=true to filter for administrative regions
-            const response = await fetch(`/travel/locations/tips?keywords=${encodeURIComponent(keyword)}&city_search=true`);
-            const data = await response.json();
-            
-            if (!data || data.length === 0) {
-                resultsDiv.innerHTML = '<div class="p-3 text-center text-slate-400 text-xs">未找到相关城市</div>';
-                return;
-            }
-            
-            resultsDiv.innerHTML = data.map(item => `
-                <div class="px-4 py-3 hover:bg-cyan-50 cursor-pointer border-b border-slate-50 last:border-0 transition"
-                     onmousedown="selectDestinationCity(this, '${item.name.replace(/'/g, "\\'")}')">
-                    <div class="font-medium text-slate-700 text-sm flex justify-between">
-                        <span>${item.name}</span>
-                        <span class="text-xs text-cyan-600 bg-cyan-50 px-1.5 py-0.5 rounded ml-2 whitespace-nowrap">选择</span>
-                    </div>
-                    ${item.district ? `<div class="text-xs text-slate-400 mt-0.5 truncate">${item.district}</div>` : ''}
-                </div>
-            `).join('');
-            
-        } catch (e) {
-            console.error(e);
-            resultsDiv.classList.add('hidden');
-        }
-    }, 300);
-}
-
-function selectDestinationCity(element, cityName) {
-    const container = element.closest('.flex-grow');
-    const input = container.querySelector('input');
-    const results = container.querySelector('div[id$="-results"]');
-    
-    input.value = cityName;
-    results.classList.add('hidden');
-    updateTotalDays(); // Trigger any updates
-}
-
-function updateTotalDays() {
-    const daysInputs = document.querySelectorAll('.dest-days');
-    let total = 0;
-    daysInputs.forEach(input => total += parseInt(input.value) || 0);
-    document.getElementById('total-days').textContent = total;
 }
 
 async function submitCreatePlan() {
     let title = document.getElementById('create-title').value.trim();
     const startDateStr = document.getElementById('create-date').value;
-    
-    // Gather destinations
-    const destItems = document.querySelectorAll('#create-dest-list > div');
-    const legs = [];
-    
-    destItems.forEach(item => {
-        const city = item.querySelector('.dest-city').value.trim();
-        const days = parseInt(item.querySelector('.dest-days').value) || 1;
-        if (city) {
-            legs.push({ city, days });
-        }
-    });
-    
-    if (legs.length === 0) {
-        showToast('请至少添加一个游玩城市', 'error');
-        return;
-    }
+    const totalDays = parseInt(document.getElementById('create-days').value) || 1;
 
     // Show loading
     const saveBtn = document.querySelector('button[onclick="submitCreatePlan()"]');
     const originalContent = saveBtn.innerHTML;
     saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 创建中...';
 
-    // Auto-generate title via LLM if empty
+    // Fallback title if empty
     if (!title) {
-        saveBtn.innerHTML = '<i class="fas fa-magic fa-spin"></i> AI 生成标题中...';
-        const totalDays = legs.reduce((sum, l) => sum + l.days, 0);
-        const cities = legs.map(l => l.city);
-        try {
-            const res = await fetch('/travel/generate-title', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ cities, days: totalDays })
-            });
-            const data = await res.json();
-            title = data.title || `${cities.join('、')}${totalDays}日游`;
-        } catch (e) {
-            console.warn('Auto title generation failed:', e);
-            title = `${cities.join('、')}${totalDays}日游`;
-        }
-        // Fill back into the input for user to see
-        document.getElementById('create-title').value = title;
+        const dateStr = new Date(startDateStr).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+        title = `${dateStr}出发 · ${totalDays}日旅行`;
     }
-
-    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 生成中...';
 
     // Build Days
     const days = [];
     let currentDate = new Date(startDateStr);
-    let dayIndex = 1;
-    
-    legs.forEach(leg => {
-        for (let i = 0; i < leg.days; i++) {
-            days.push({
-                day_index: dayIndex,
-                date: currentDate.toISOString().split('T')[0], // YYYY-MM-DD
-                city: leg.city,
-                segments: []
-            });
-            
-            // Next day
-            currentDate.setDate(currentDate.getDate() + 1);
-            dayIndex++;
-        }
-    });
+
+    for (let i = 0; i < totalDays; i++) {
+        days.push({
+            day_index: i + 1,
+            date: currentDate.toISOString().split('T')[0],
+            city: '',
+            segments: []
+        });
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
 
     const newPlan = {
         title: title,
@@ -544,7 +392,6 @@ async function submitCreatePlan() {
             showToast('行程创建成功');
             activePlan = plan;
             
-            // Ensure data structure
             if (!activePlan.days) activePlan.days = [];
             
             showView('plan-detail');
