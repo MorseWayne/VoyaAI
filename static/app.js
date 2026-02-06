@@ -11,7 +11,10 @@ function showView(viewId) {
     });
 
     // Show selected view
-    document.getElementById(`view-${viewId}`).classList.remove('hidden');
+    const viewEl = document.getElementById(`view-${viewId}`);
+    if (viewEl) {
+        viewEl.classList.remove('hidden');
+    }
     
     // Add active class to selected nav item
     const navItem = document.getElementById(`nav-${viewId}`);
@@ -19,9 +22,50 @@ function showView(viewId) {
         navItem.classList.add('active');
     }
 
+    // Toggle navbar menu visibility: hide on home, show on other views
+    const navMenu = document.getElementById('nav-menu');
+    const navMobileBtn = document.getElementById('nav-mobile-btn');
+    const isHome = viewId === 'home';
+
+    if (navMenu) {
+        if (isHome) {
+            navMenu.classList.add('!hidden');
+        } else {
+            navMenu.classList.remove('!hidden');
+        }
+    }
+    if (navMobileBtn) {
+        if (isHome) {
+            navMobileBtn.classList.add('!hidden');
+        } else {
+            navMobileBtn.classList.remove('!hidden');
+        }
+    }
+
+    // Close mobile menu when switching views
+    closeMobileMenu();
+
     // Load data if needed
     if (viewId === 'plans') {
         loadPlans();
+    }
+
+    // Scroll to top on view change
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Mobile menu toggle
+function toggleMobileMenu() {
+    const menu = document.getElementById('mobile-menu');
+    if (menu) {
+        menu.classList.toggle('hidden');
+    }
+}
+
+function closeMobileMenu() {
+    const menu = document.getElementById('mobile-menu');
+    if (menu) {
+        menu.classList.add('hidden');
     }
 }
 
@@ -938,6 +982,6 @@ function showToast(message, type = 'success') {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    // Set default view
-    showView('planner');
+    // Set default view to home card navigation
+    showView('home');
 });
