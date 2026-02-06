@@ -9,7 +9,7 @@
 
 ## 使用说明
 1.  **访问规划页面**：
-    在浏览器中打开 [http://localhost:8182/static/planner.html](http://localhost:8182/static/planner.html)。
+    在浏览器中打开 [http://localhost:8182/](http://localhost:8182/)。
     *(请确保通过 `uv run python main.py` 启动了后端服务)*
 
 2.  **规划行程**：

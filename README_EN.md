@@ -1,5 +1,9 @@
 # 🧭 VoyaAI
 
+> **⚠️ Current Mode: Route Planner Only**
+> To optimize user experience, only the **Smart Route Planner** feature is currently enabled. AI Travel Planning generation is temporarily suspended.
+> Please visit the home page [http://localhost:8182/](http://localhost:8182/) to use the Route Planner.
+
 > AI-powered travel itinerary generator with real-time data integration
 
 VoyaAI is an intelligent travel planning assistant that leverages Large Language Models and the Model Context Protocol (MCP) to create personalized travel itineraries. It aggregates information from multiple sources to generate comprehensive, ready-to-use travel plans presented as beautifully formatted HTML pages.

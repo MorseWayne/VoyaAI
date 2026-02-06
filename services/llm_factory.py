@@ -235,6 +235,7 @@ async def create_agent(
         model=settings.llm_model,
         system_prompt=system_prompt,
         tools=tools,
+        max_iterations=settings.llm_max_iterations,
     )
 
 

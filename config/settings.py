@@ -22,6 +22,10 @@ class Settings(BaseSettings):
         default="gemini-3-flash",
         description="Model name to use"
     )
+    llm_max_iterations: int = Field(
+        default=15,
+        description="Maximum number of agent iterations"
+    )
     
     # MCP Services
     amap_mcp_url: str = Field(default="", description="Amap MCP SSE URL")

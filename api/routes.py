@@ -5,9 +5,10 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from config import get_settings
 from services import TravelService, RouteService
 
 logger = logging.getLogger(__name__)
@@ -52,17 +53,8 @@ class RouteRequest(BaseModel):
 
 @router.get("/")
 async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "VoyaAI",
-        "description": "AI-powered travel planning assistant",
-        "version": "1.0.0",
-        "endpoints": {
-            "POST /travel/plan": "Generate a travel plan (JSON response)",
-            "GET /travel/chat": "Generate a travel plan (simple query)",
-            "GET /travel/html": "Get the latest generated HTML",
-        }
-    }
+    """Root endpoint redirects to Route Planner."""
+    return RedirectResponse(url="/static/planner.html")
 
 
 @router.get("/health")
@@ -79,6 +71,12 @@ async def create_travel_plan(request: TravelRequest):
     This endpoint accepts travel requirements and returns a complete
     travel itinerary with both text and HTML formats.
     """
+    # Temporarily disabled per user request
+    raise HTTPException(
+        status_code=503,
+        detail="AI Travel Planning feature is temporarily disabled. Please use the Route Planner."
+    )
+
     try:
         logger.info(f"Received travel plan request: {request.content[:100]}...")
         
@@ -131,6 +129,12 @@ async def travel_chat(content: str):
     Compatible with the original Java API:
     GET /travel/chat?content=your_travel_requirements
     """
+    # Temporarily disabled per user request
+    raise HTTPException(
+        status_code=503,
+        detail="AI Travel Planning feature is temporarily disabled. Please use the Route Planner."
+    )
+
     try:
         logger.info(f"Received travel chat request: {content[:100]}...")
         

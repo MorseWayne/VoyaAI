@@ -172,8 +172,9 @@ class MCPClientManager:
         manager = cls()
         
         # Register configured MCP services
-        if settings.xhs_mcp_url:
-            manager.register_service("xiaohongshu", settings.xhs_mcp_url)
+        # Temporarily disabled Xiaohongshu per user request
+        # if settings.xhs_mcp_url:
+        #     manager.register_service("xiaohongshu", settings.xhs_mcp_url)
         
         if settings.weather_mcp_url:
             manager.register_service("weather", settings.weather_mcp_url)

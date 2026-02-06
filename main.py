@@ -13,6 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -32,11 +33,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan events for the application."""
+    settings = get_settings()
+    logger.info("=" * 50)
+    logger.info("🧭 VoyaAI Starting (Route Planner Mode)...")
+    logger.info(f"   Mode: Route Planner Only")
+    logger.info(f"   Server: http://{settings.host}:{settings.port}")
+    logger.info(f"   Docs: http://{settings.host}:{settings.port}/docs")
+    logger.info("=" * 50)
+    yield
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     
     app = FastAPI(
         title="VoyaAI",
+        lifespan=lifespan,
         description="""
         🧭 **VoyaAI** - AI-powered Travel Planning Assistant
         
@@ -82,17 +97,6 @@ def create_app() -> FastAPI:
     if Path("static").exists():
         app.mount("/static", StaticFiles(directory="static"), name="static")
 
-    
-    @app.on_event("startup")
-    async def startup_event():
-        settings = get_settings()
-        logger.info("=" * 50)
-        logger.info("🧭 VoyaAI Starting...")
-        logger.info(f"   LLM Provider: {settings.llm_provider}")
-        logger.info(f"   Server: http://{settings.host}:{settings.port}")
-        logger.info(f"   Docs: http://{settings.host}:{settings.port}/docs")
-        logger.info("=" * 50)
-    
     return app
 
 
