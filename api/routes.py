@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from config import get_settings
@@ -53,12 +53,6 @@ class RouteRequest(BaseModel):
     strategy: str = Field("driving", description="Travel strategy: driving, walking, transit")
     preference: str = Field("time", description="Optimization preference: time, distance, transit_first, driving_first")
 
-
-
-@router.get("/")
-async def root():
-    """Root endpoint redirects to Landing Page."""
-    return RedirectResponse(url="/static/index.html")
 
 
 @router.get("/health")

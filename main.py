@@ -11,7 +11,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -90,12 +90,22 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Include routes
+    # Include API routes
     app.include_router(router)
-    
-    # Mount static files
-    if Path("static").exists():
-        app.mount("/static", StaticFiles(directory="static"), name="static")
+
+    # SPA catch-all: serve static files or fall back to index.html
+    static_dir = Path("static")
+    index_file = static_dir / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Serve static files; fall back to index.html for SPA client-side routing."""
+        if full_path:
+            file_path = (static_dir / full_path).resolve()
+            # Security: ensure the resolved path stays within static/
+            if file_path.is_file() and str(file_path).startswith(str(static_dir.resolve())):
+                return FileResponse(file_path)
+        return FileResponse(index_file)
 
     return app
 
