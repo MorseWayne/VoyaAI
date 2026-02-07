@@ -35,9 +35,11 @@ class Segment(BaseModel):
 
 class DayPlan(BaseModel):
     day_index: int
-    date: Optional[str] = None # YYYY-MM-DD
+    date: Optional[str] = None  # YYYY-MM-DD
     city: Optional[str] = None
     segments: List[Segment] = Field(default_factory=list)
+    start_time_hm: Optional[str] = None  # 当日出发时间，如 "08:00"
+    location_stay_minutes: Optional[List[int]] = None  # 各地点停留分钟数，长度 = len(segments)+1
 
 class Itinerary(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

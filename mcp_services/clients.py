@@ -66,12 +66,17 @@ class MCPService:
     
     name: str
     url: str
+    headers: dict[str, str] | None = None
     _tools_cache: list[dict] = field(default_factory=list, repr=False)
     _tools_loaded: bool = field(default=False, repr=False)
     
+    def _http_headers(self) -> dict[str, str] | None:
+        """Headers to pass to streamablehttp_client (e.g. Authorization, Content-Type)."""
+        return self.headers
+    
     async def _get_session(self):
         """Create a new MCP session."""
-        return streamablehttp_client(self.url)
+        return streamablehttp_client(self.url, headers=self._http_headers())
     
     async def list_tools(self) -> list[dict]:
         """
@@ -86,6 +91,7 @@ class MCPService:
             
             async with streamablehttp_client(
                 self.url,
+                headers=self._http_headers(),
                 httpx_client_factory=create_no_proxy_http_client
             ) as (read, write, _):
                 async with ClientSession(read, write) as session:
@@ -118,6 +124,7 @@ class MCPService:
         try:
             async with streamablehttp_client(
                 self.url,
+                headers=self._http_headers(),
                 httpx_client_factory=create_no_proxy_http_client
             ) as (read, write, _):
                 async with ClientSession(read, write) as session:
@@ -194,12 +201,24 @@ class MCPClientManager:
         if settings.amap_mcp_url:
             manager.register_service("amap", settings.amap_mcp_url)
         
+        if settings.aigohotel_mcp_url:
+            headers = None
+            if settings.aigohotel_mcp_token:
+                headers = {
+                    "Authorization": f"Bearer {settings.aigohotel_mcp_token}",
+                    "Content-Type": "application/json",
+                }
+            manager.register_service("aigohotel", settings.aigohotel_mcp_url, headers=headers)
+        
+        if settings.train_12306_mcp_url:
+            manager.register_service("train_12306", settings.train_12306_mcp_url)
+        
         return manager
     
-    def register_service(self, name: str, url: str):
-        """Register a new MCP service."""
-        self.services[name] = MCPService(name=name, url=url)
-        logger.info(f"[MCPManager] Registered service: {name} -> {url}")
+    def register_service(self, name: str, url: str, headers: dict[str, str] | None = None):
+        """Register a new MCP service. Optional headers (e.g. Authorization) for streamable HTTP."""
+        self.services[name] = MCPService(name=name, url=url, headers=headers)
+        logger.info(f"[MCPManager] Registered service: {name} -> {url}" + (" (with auth)" if headers else ""))
     
     def get_service(self, name: str) -> MCPService | None:
         """Get a registered MCP service."""

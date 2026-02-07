@@ -214,13 +214,20 @@ async function saveCurrentPlan() {
              segments: currentPlanData.segments.map((seg, idx) => {
                  const originPoi = currentPlanData.poi_details[idx];
                  const destPoi = currentPlanData.poi_details[idx+1];
-                 
+                 const modeStr = (seg.mode || '').toString();
+
                  // Map mode strictly to enum
                  let mode = 'driving';
-                 if (seg.mode.includes('公交') || seg.mode.includes('地铁') || seg.mode.includes('Transit')) mode = 'transit';
-                 if (seg.mode.includes('步行')) mode = 'walking';
-                 if (seg.mode.includes('骑行')) mode = 'cycling';
-                 
+                 if (modeStr.includes('公交') || modeStr.includes('地铁') || modeStr.includes('Transit')) mode = 'transit';
+                 if (modeStr.includes('步行')) mode = 'walking';
+                 if (modeStr.includes('骑行')) mode = 'cycling';
+
+                 // 城际/长途/跨城 与市内公交区分，用 details.display_label 存展示名
+                 const details = {};
+                 if (mode === 'transit' && (modeStr.includes('城际') || modeStr.includes('长途') || modeStr.includes('跨城'))) {
+                     details.display_label = '城际交通';
+                 }
+
                  return {
                      type: mode,
                      origin: {
@@ -238,7 +245,8 @@ async function saveCurrentPlan() {
                          city: city
                      },
                      distance_km: parseFloat(seg.distance_km),
-                     duration_minutes: parseFloat(seg.duration_m)
+                     duration_minutes: parseFloat(seg.duration_m),
+                     ...(Object.keys(details).length ? { details } : {})
                  };
              })
         }]
@@ -279,6 +287,127 @@ function formatDuration(seconds) {
         return `${hours}小时${minutes}分钟`;
     }
     return `${minutes}分钟`;
+}
+
+/** 从 "YYYY-MM-DD HH:MM" 或 "HH:MM" 解析为时间戳（毫秒），用于计算时长 */
+function parseTimeToMs(str) {
+    if (!str || typeof str !== 'string') return NaN;
+    const s = str.trim();
+    if (/^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}/.test(s)) {
+        return new Date(s.replace(/-/g, '/')).getTime();
+    }
+    if (/^\d{1,2}:\d{2}/.test(s)) {
+        const [h, m] = s.split(':').map(Number);
+        return (h * 60 + m) * 60 * 1000;
+    }
+    return NaN;
+}
+
+/** 根据出发、到达时间字符串计算飞行/车程时长（秒），无效返回 0 */
+function durationSecondsFromTimes(depStr, arrStr) {
+    const depMs = parseTimeToMs(depStr);
+    const arrMs = parseTimeToMs(arrStr);
+    if (Number.isNaN(depMs) || Number.isNaN(arrMs) || arrMs <= depMs) return 0;
+    return Math.round((arrMs - depMs) / 1000);
+}
+
+/** 午夜起分钟数 → "HH:MM" */
+function minutesToHm(minutes) {
+    if (minutes == null || minutes < 0) return '--';
+    const h = Math.floor(minutes / 60) % 24;
+    const m = Math.floor(minutes % 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** "HH:MM" → 午夜起分钟数 */
+function hmToMinutes(hm) {
+    if (!hm || typeof hm !== 'string') return 0;
+    const parts = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!parts) return 0;
+    return parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10);
+}
+
+/** 时间字符串（"HH:MM" 或 "YYYY-MM-DD HH:MM"）→ 当日午夜起分钟数，无效返回 null */
+function timeStringToMinutes(str) {
+    if (!str || typeof str !== 'string') return null;
+    const ms = parseTimeToMs(str.trim());
+    if (Number.isNaN(ms)) return null;
+    const d = new Date(ms);
+    return d.getHours() * 60 + d.getMinutes();
+}
+
+/** 判断该段是否为明显导入的车票（航班/火车且同时有发车、到达时间） */
+function segmentHasTicketTimes(seg) {
+    if (!seg || (seg.type !== 'flight' && seg.type !== 'train')) return false;
+    const dep = seg.details?.departure_time || seg.origin?.departure_time;
+    const arr = seg.details?.arrival_time || seg.destination?.arrival_time;
+    return !!(dep && arr && timeStringToMinutes(dep) != null && timeStringToMinutes(arr) != null);
+}
+
+/** 确保当天 location_stay_minutes 数组长度与地点数一致（segments.length + 1），缺省补 0 */
+function ensureDayStayArray(day) {
+    if (!day) return;
+    const len = (day.segments && day.segments.length) ? day.segments.length + 1 : 1;
+    if (!day.location_stay_minutes) day.location_stay_minutes = [];
+    while (day.location_stay_minutes.length < len) {
+        day.location_stay_minutes.push(0);
+    }
+    if (day.location_stay_minutes.length > len) {
+        day.location_stay_minutes.length = len;
+    }
+}
+
+/**
+ * 根据「当日出发时间」「各点停留时间」「各段出行耗时」自动计算每个节点的到达与离开时间。
+ * 若某段为明显导入的车票（航班/火车且有发车、到达时间），则该段的出发、到达时间以车票为准。
+ */
+function getDayArrivalTimes(day) {
+    const segs = day.segments || [];
+    const stay = day.location_stay_minutes || [];
+    const startHm = day.start_time_hm || '08:00';
+    let minutes = hmToMinutes(startHm);
+    const result = [];
+    for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i];
+        const stayMin = Math.max(0, parseFloat(stay[i]) || 0);
+        let departMin;
+        let departHm;
+        if (segmentHasTicketTimes(seg)) {
+            const depStr = seg.details?.departure_time || seg.origin?.departure_time;
+            const arrStr = seg.details?.arrival_time || seg.destination?.arrival_time;
+            departMin = timeStringToMinutes(depStr);
+            const arrMin = timeStringToMinutes(arrStr);
+            result.push({
+                arrivalMinutes: minutes,
+                arrivalHm: minutesToHm(minutes),
+                stayMinutes: stayMin,
+                departureMinutes: departMin,
+                departureHm: minutesToHm(departMin)
+            });
+            minutes = arrMin;
+        } else {
+            departMin = minutes + stayMin;
+            departHm = minutesToHm(departMin);
+            result.push({
+                arrivalMinutes: minutes,
+                arrivalHm: minutesToHm(minutes),
+                stayMinutes: stayMin,
+                departureMinutes: departMin,
+                departureHm: departHm
+            });
+            const segDuration = Math.max(0, parseFloat(seg.duration_minutes) || 0);
+            minutes = departMin + segDuration;
+        }
+    }
+    const lastStay = Math.max(0, parseFloat(stay[segs.length]) || 0);
+    result.push({
+        arrivalMinutes: minutes,
+        arrivalHm: minutesToHm(minutes),
+        stayMinutes: lastStay,
+        departureMinutes: minutes + lastStay,
+        departureHm: minutesToHm(minutes + lastStay)
+    });
+    return result;
 }
 
 function formatDistance(meters) {
@@ -498,6 +627,10 @@ async function submitCreatePlan() {
 let activePlan = null;
 let activeDetailTab = 0;  // 'overview' | 0-based 第几天，0=第1天
 let editingSegmentIndex = -1;
+/** 当前查看详情的交通段索引，用于详情弹窗内「更改交通方式」 */
+let viewingDetailSegmentIndex = -1;
+/** 非 null 时表示在指定地点索引前插入新地点（即作为该索引前一站的下一站）；null 表示追加到末尾 */
+let insertAtIndex = null;
 let debounceTimer = null;
 
 /** 当前选中的是第几天（用于添加/编辑 segment），总览时默认第 1 天 */
@@ -540,6 +673,16 @@ function updatePlanDepartureDate(dateStr) {
     renderPlanDetail();
 }
 
+/** 修改当日出发时间（仅当前选中的天） */
+function updateDayStartTime(hm) {
+    if (!activePlan || !hm) return;
+    const dayIndex = getCurrentDayIndex();
+    if (activeDetailTab === 'overview' || dayIndex >= activePlan.days.length) return;
+    activePlan.days[dayIndex].start_time_hm = hm;
+    renderPlanDetail();
+    saveActivePlanSilently();
+}
+
 /** 修改旅游天数：增删末尾的天 */
 function updatePlanDaysCount(newCount) {
     if (!activePlan || newCount < 1 || newCount > 30) return;
@@ -567,7 +710,8 @@ function updatePlanDaysCount(newCount) {
                 day_index: i + 1,
                 date: d.toISOString().split('T')[0],
                 city: activePlan.days[0].city || '',
-                segments: []
+                segments: [],
+                start_time_hm: '08:00'
             });
         }
     }
@@ -609,11 +753,19 @@ function renderPlanDetail() {
     }, 0);
     subtitleEl.textContent = `${dayCount} 天 · ${spotCount} 个地点`;
 
-    // 同步出发日期、旅游天数控件
+    // 同步出发日期、旅游天数、当日出发时间控件
     const departureInput = document.getElementById('detail-departure-date');
     const daysInput = document.getElementById('detail-total-days');
+    const startTimeWrap = document.getElementById('detail-day-start-time-wrap');
+    const startTimeInput = document.getElementById('detail-day-start-time');
     if (departureInput && activePlan.days[0].date) departureInput.value = activePlan.days[0].date;
     if (daysInput) daysInput.value = activePlan.days.length;
+    const isDayTab = typeof activeDetailTab === 'number';
+    if (startTimeWrap) startTimeWrap.classList.toggle('hidden', !isDayTab);
+    if (startTimeInput && isDayTab && activePlan.days[activeDetailTab]) {
+        const day = activePlan.days[activeDetailTab];
+        startTimeInput.value = day.start_time_hm || '08:00';
+    }
 
     // 渲染日期 Tab 栏：总览、第1天、第2天...
     const tabValues = ['overview', ...activePlan.days.map((_, i) => i)];
@@ -655,12 +807,15 @@ function renderPlanDetail() {
     const segments = day.segments;
     
     if (segments.length === 0) {
+        ensureDayStayArray(day);
+        const arrivalTimes = getDayArrivalTimes(day);
+        const at0 = arrivalTimes[0];
         const startLocation = (dayIndex === 0) ? (activePlan.start_location || activePlan.tempStartLocation) : null;
         if (startLocation) {
             timelineEl.innerHTML = `
                 <div class="relative pl-8">
                     <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-slate-200"></div>
-                    ${renderLocationCard(startLocation, 0, true, dayIndex === 0 ? '起点' : null)}
+                    ${renderLocationCard(startLocation, 0, true, dayIndex === 0 ? '起点' : null, at0 ? at0.arrivalHm : (day.start_time_hm || '08:00'), at0 ? at0.stayMinutes : 0, dayIndex, at0 ? at0.departureHm : null)}
                     <div class="mt-8 text-center text-slate-400 text-sm bg-slate-50 p-4 rounded-lg border border-dashed border-slate-300">
                         <i class="fas fa-arrow-down mb-2 block"></i>
                         点击右下角 "+" 添加下一个地点
@@ -671,7 +826,7 @@ function renderPlanDetail() {
             timelineEl.innerHTML = `
                 <div class="relative pl-8">
                     <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-slate-200"></div>
-                    ${renderLocationCard(null, 0, true, null)}
+                    ${renderLocationCard(null, 0, true, null, at0 ? at0.arrivalHm : (day.start_time_hm || '08:00'), at0 ? at0.stayMinutes : 0, dayIndex, at0 ? at0.departureHm : null)}
                     <div class="mt-8 text-center text-slate-400 text-sm bg-slate-50 p-4 rounded-lg border border-dashed border-slate-300">
                         <i class="fas fa-arrow-down mb-2 block"></i>
                         点击右下角 "+" 添加下一个地点
@@ -682,31 +837,97 @@ function renderPlanDetail() {
         return;
     }
 
+    ensureDayStayArray(day);
+    const arrivalTimes = getDayArrivalTimes(day);
+
     let html = `<div class="relative pl-8 pb-4">
         <div class="absolute left-[11px] top-4 bottom-4 w-0.5 bg-slate-200"></div>`;
     segments.forEach((seg, index) => {
         const isFirst = index === 0;
         const isLastSeg = index === segments.length - 1;
-        html += renderLocationCard(seg.origin, index, false, isFirst && dayIndex === 0 ? '起点' : null);
+        const at0 = arrivalTimes[index];
+        html += renderLocationCard(seg.origin, index, false, isFirst && dayIndex === 0 ? '起点' : null, at0 ? at0.arrivalHm : '--', at0 ? at0.stayMinutes : 0, dayIndex, at0 ? at0.departureHm : null);
         html += renderTransportConnector(seg, index);
         if (isLastSeg) {
-            html += renderLocationCard(seg.destination, index + 1, true, '终点');
+            const at1 = arrivalTimes[index + 1];
+            html += renderLocationCard(seg.destination, index + 1, true, '终点', at1 ? at1.arrivalHm : '--', at1 ? at1.stayMinutes : 0, dayIndex, at1 ? at1.departureHm : null);
         }
     });
     html += `</div>`;
     timelineEl.innerHTML = html;
+
+    // 航班/火车段若未手动导入距离与耗时，则用高德补全
+    // 使用标记避免对同一段重复请求（失败后不再重试，直到用户手动触发）
+    const needAmap = [];
+    segments.forEach((seg, i) => {
+        if ((seg.type === 'flight' || seg.type === 'train') &&
+            (seg.duration_minutes == null || seg.distance_km == null || seg.duration_minutes === 0 || seg.distance_km === 0) &&
+            !seg._amapAttempted) {
+            needAmap.push(i);
+        }
+    });
+    if (needAmap.length > 0) {
+        (async () => {
+            let anyUpdated = false;
+            for (const i of needAmap) {
+                segments[i]._amapAttempted = true;  // 标记已尝试，避免重复请求
+                try {
+                    const updated = await ensureSegmentFromAmap(dayIndex, i);
+                    if (updated) anyUpdated = true;
+                } catch (_) {}
+                await new Promise(r => setTimeout(r, 400));
+            }
+            if (anyUpdated) {
+                renderPlanDetail();
+                // 补全成功后自动保存，下次从行程列表进入无需再请求高德
+                saveActivePlanSilently();
+            }
+        })();
+    }
 }
 
-function renderLocationCard(location, index, isLast = false, roleLabel = null) {
+/** 航班/火车段缺少距离或耗时时，请求高德并回写；返回是否更新了 segment */
+async function ensureSegmentFromAmap(dayIndex, segmentIndex) {
+    const segment = activePlan?.days?.[dayIndex]?.segments?.[segmentIndex];
+    if (!segment || (segment.type !== 'flight' && segment.type !== 'train')) return false;
+    if (segment.origin?.name && segment.destination?.name &&
+        segment.duration_minutes != null && segment.distance_km != null &&
+        segment.duration_minutes > 0 && segment.distance_km > 0) {
+        return false;
+    }
+    try {
+        const result = await calculateSegmentData(segment.origin, segment.destination, segment.type);
+        if (result.distance_km != null) segment.distance_km = result.distance_km;
+        if (result.duration_minutes != null) segment.duration_minutes = result.duration_minutes;
+        return true;
+    } catch (e) {
+        // 距离过短时后端会拒接火车/航班（如「两地直线距离仅 X 公里，不适合使用火车/高铁」），改用公交/地铁估算
+        if (segment.type === 'train' || segment.type === 'flight') {
+            try {
+                const fallback = await calculateSegmentData(segment.origin, segment.destination, 'transit');
+                if (fallback.distance_km != null) segment.distance_km = fallback.distance_km;
+                if (fallback.duration_minutes != null) segment.duration_minutes = fallback.duration_minutes;
+                return true;
+            } catch (_) {}
+        }
+        return false;
+    }
+}
+
+function renderLocationCard(location, index, isLast = false, roleLabel = null, arrivalHm = '--', stayMinutes = 0, dayIndex = 0, departureHm = null) {
     const safeLoc = location || {};
     const name = safeLoc.name || (roleLabel === '起点' ? '起点（待补充）' : roleLabel === '终点' ? '终点（待补充）' : '未知地点');
-    const address = safeLoc.address || safeLoc.city || '未知地址';
+    const address = safeLoc.address || safeLoc.city || safeLoc.name || '未知地址';
     const labelHtml = roleLabel ? `<span class="inline-block px-2 py-0.5 rounded text-xs font-medium ${roleLabel === '起点' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'} ml-2">${roleLabel}</span>` : '';
+    const stayVal = Math.max(0, parseInt(stayMinutes, 10) || 0);
+    const timeLabel = departureHm && stayVal > 0 ? `到达 ${arrivalHm} · 离开 ${departureHm}` : `到达 ${arrivalHm}`;
     return `
         <div class="relative mb-6 group">
-            <div class="absolute -left-[41px] top-0 w-6 h-6 rounded-full border-2 border-white shadow-md z-10 
-                 ${isLast ? 'bg-red-500' : 'bg-primary'} text-white flex items-center justify-center text-xs font-bold">
-                ${index + 1}
+            <div class="absolute -left-[41px] top-0 flex flex-col items-center z-10">
+                <div class="w-6 h-6 rounded-full border-2 border-white shadow-md ${isLast ? 'bg-red-500' : 'bg-primary'} text-white flex items-center justify-center text-xs font-bold">
+                    ${index + 1}
+                </div>
+                <div class="text-[10px] text-slate-500 mt-0.5 font-mono whitespace-nowrap text-center">${arrivalHm}</div>
             </div>
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition">
                 <div class="flex justify-between items-start">
@@ -715,14 +936,37 @@ function renderLocationCard(location, index, isLast = false, roleLabel = null) {
                         <p class="text-xs text-slate-500 mt-1 truncate max-w-[200px] md:max-w-md">
                             <i class="fas fa-map-marker-alt mr-1"></i> ${address}
                         </p>
+                        <p class="text-xs text-slate-500 mt-1 font-mono">${timeLabel}</p>
+                        <div class="flex items-center gap-2 mt-2" onclick="event.stopPropagation()">
+                            <span class="text-xs text-slate-400">停留</span>
+                            <input type="number" min="0" max="480" step="15" value="${stayVal}" class="w-14 text-xs text-center border border-slate-200 rounded px-1 py-0.5 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 outline-none" onchange="setLocationStayMinutes(${dayIndex}, ${index}, this.value)">
+                            <span class="text-xs text-slate-400">分钟</span>
+                        </div>
                     </div>
-                    <button class="text-slate-300 hover:text-red-500 transition px-2" onclick="removeLocation(${index}, ${isLast})">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
+                    <div class="flex items-center gap-1" onclick="event.stopPropagation()">
+                        <button type="button" class="w-8 h-8 flex items-center justify-center rounded-full bg-cyan-50 text-cyan-600 hover:bg-cyan-100 transition text-sm font-bold" onclick="showAddLocationModal(${isLast ? 'null' : index + 1})" title="在此处插入地点（添加为下一站）">
+                            +
+                        </button>
+                        <button type="button" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-500 transition text-sm font-bold" onclick="removeLocation(${index}, ${isLast})" title="删除此地点">
+                            −
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     `;
+}
+
+function setLocationStayMinutes(dayIndex, locationIndex, value) {
+    const day = activePlan?.days?.[dayIndex];
+    if (!day) return;
+    ensureDayStayArray(day);
+    const mins = Math.max(0, Math.min(480, parseInt(value, 10) || 0));
+    if (day.location_stay_minutes[locationIndex] !== mins) {
+        day.location_stay_minutes[locationIndex] = mins;
+        renderPlanDetail();
+        saveActivePlanSilently();
+    }
 }
 
 function renderTransportConnector(segment, index) {
@@ -731,20 +975,34 @@ function renderTransportConnector(segment, index) {
     const dep = segment.details?.departure_time || segment.origin?.departure_time;
     const arr = segment.details?.arrival_time || segment.destination?.arrival_time;
     const timeRange = (dep && arr) ? `${dep} → ${arr}` : (dep || arr || '');
-    const rightText = (segment.type === 'flight' || segment.type === 'train') && timeRange ? timeRange : `${duration} · ${distance}`;
+    const isFlightOrTrain = segment.type === 'flight' || segment.type === 'train';
+    let rightText;
+    if (isFlightOrTrain && timeRange) {
+        const flightDurationSec = durationSecondsFromTimes(dep, arr);
+        const flightDurationStr = flightDurationSec > 0 ? formatDuration(flightDurationSec) : '';
+        rightText = flightDurationStr ? `${timeRange} · ${flightDurationStr}` : timeRange;
+    } else {
+        // 无发车/到达时间时仍展示耗时和距离（有则显示数值，无则显示 --）
+        rightText = `${duration} · ${distance}`;
+    }
 
     let icon = 'fa-car';
     let label = '驾车';
-    if (segment.type === 'transit') { icon = 'fa-bus'; label = '公交'; }
+    if (segment.type === 'transit') {
+        icon = 'fa-bus';
+        label = (segment.details && segment.details.display_label === '城际交通') ? '城际交通' : '公交/地铁';
+    }
     if (segment.type === 'walking') { icon = 'fa-walking'; label = '步行'; }
     if (segment.type === 'cycling') { icon = 'fa-bicycle'; label = '骑行'; }
     if (segment.type === 'flight') { icon = 'fa-plane'; label = segment.details?.flight_no || '航班'; }
     if (segment.type === 'train') { icon = 'fa-train'; label = segment.details?.train_no || '高铁/火车'; }
 
+    // 所有交通段均可点击查看详情
+    const wrapperClass = 'inline-flex items-center gap-3 bg-slate-50 hover:bg-cyan-50 border border-slate-200 hover:border-cyan-200 px-3 py-1.5 rounded-lg cursor-pointer transition group';
+
     return `
         <div class="ml-4 mb-6 relative">
-            <div onclick="openTransportModal(${index})" 
-                 class="inline-flex items-center gap-3 bg-slate-50 hover:bg-cyan-50 border border-slate-200 hover:border-cyan-200 px-3 py-1.5 rounded-lg cursor-pointer transition group">
+            <div onclick="openTransportDetailModal(${index})" class="${wrapperClass}">
                 <div class="text-slate-400 group-hover:text-cyan-600">
                     <i class="fas ${icon}"></i>
                     <span class="text-xs ml-1">${label}</span>
@@ -753,7 +1011,7 @@ function renderTransportConnector(segment, index) {
                 <div class="text-xs text-slate-500 font-mono">
                     ${rightText}
                 </div>
-                <i class="fas fa-chevron-right text-[10px] text-slate-300 ml-1"></i>
+                <i class="fas fa-chevron-right text-[10px] text-slate-300 ml-1 group-hover:text-cyan-500"></i>
             </div>
         </div>
     `;
@@ -840,8 +1098,8 @@ async function submitTicketImport() {
         const dayIdx = getCurrentDayIndex();
         const origin = {
             name: data.origin_name || '出发地',
-            address: null,
-            city: null,
+            address: data.origin_name || null,
+            city: data.origin_name || null,
             lat: null,
             lng: null,
             departure_time: data.departure_time || null,
@@ -849,8 +1107,8 @@ async function submitTicketImport() {
         };
         const destination = {
             name: data.destination_name || '目的地',
-            address: null,
-            city: null,
+            address: data.destination_name || null,
+            city: data.destination_name || null,
             lat: null,
             lng: null,
             departure_time: null,
@@ -887,7 +1145,8 @@ async function submitTicketImport() {
 
 // --- Interaction Logic ---
 
-function showAddLocationModal() {
+function showAddLocationModal(insertAt) {
+    insertAtIndex = typeof insertAt === 'number' ? insertAt : null;
     document.getElementById('modal-add-location').classList.remove('hidden');
     document.getElementById('location-search-input').value = '';
     document.getElementById('location-search-input').focus();
@@ -895,6 +1154,7 @@ function showAddLocationModal() {
         <div class="text-center text-slate-400 py-10">
             <i class="fas fa-keyboard text-3xl mb-2 opacity-50"></i>
             <p class="text-sm">输入关键词开始搜索</p>
+            ${insertAtIndex !== null ? '<p class="text-xs mt-1 text-cyan-600">将添加为当前站点的下一站</p>' : ''}
         </div>
     `;
 }
@@ -942,7 +1202,7 @@ function handleLocationSearch(keyword) {
 
 async function selectLocation(locationData) {
     closeAddLocationModal();
-    
+
     // Normalize location object
     const newLoc = {
         name: locationData.name,
@@ -951,6 +1211,17 @@ async function selectLocation(locationData) {
         lat: locationData.location ? parseFloat(locationData.location.split(',')[1]) : null,
         lng: locationData.location ? parseFloat(locationData.location.split(',')[0]) : null
     };
+
+    // 在指定位置插入（由卡片上的 + 触发）；当天尚无行程段时按追加处理
+    const daySegments = activePlan.days[getCurrentDayIndex()].segments;
+    if (insertAtIndex !== null && daySegments.length > 0) {
+        const at = insertAtIndex;
+        insertAtIndex = null;
+        await insertSegmentAt(at, newLoc);
+        renderPlanDetail();
+        return;
+    }
+    if (insertAtIndex !== null) insertAtIndex = null;
 
     // Case 1: Empty Plan, no temp start
     if (activePlan.days[getCurrentDayIndex()].segments.length === 0 && !activePlan.tempStartLocation) {
@@ -972,6 +1243,58 @@ async function selectLocation(locationData) {
     const lastSeg = activePlan.days[getCurrentDayIndex()].segments[activePlan.days[getCurrentDayIndex()].segments.length - 1];
     await addSegment(lastSeg.destination, newLoc);
     renderPlanDetail();
+}
+
+/** 在指定地点索引前插入新地点，并重算前后段路线 */
+async function insertSegmentAt(locationIndex, newLoc) {
+    const dayIdx = getCurrentDayIndex();
+    const segments = activePlan.days[dayIdx].segments;
+    const defaultMode = 'driving';
+
+    if (newLoc.city && !activePlan.days[dayIdx].city) {
+        activePlan.days[dayIdx].city = newLoc.city;
+    }
+
+    document.getElementById('plan-timeline').style.opacity = '0.7';
+    try {
+        if (locationIndex === 0) {
+            const firstOrigin = segments[0].origin;
+            const result = await calculateSegmentData(newLoc, firstOrigin, defaultMode);
+            segments.unshift({
+                type: defaultMode,
+                origin: newLoc,
+                destination: firstOrigin,
+                distance_km: result.distance_km,
+                duration_minutes: result.duration_minutes
+            });
+        } else {
+            const prev = segments[locationIndex - 1];
+            const [res1, res2] = await Promise.all([
+                calculateSegmentData(prev.origin, newLoc, defaultMode),
+                calculateSegmentData(newLoc, prev.destination, defaultMode)
+            ]).catch(() => [{ distance_km: 0, duration_minutes: 0 }, { distance_km: 0, duration_minutes: 0 }]);
+            const seg1 = { type: defaultMode, origin: prev.origin, destination: newLoc, distance_km: res1.distance_km, duration_minutes: res1.duration_minutes };
+            const seg2 = { type: defaultMode, origin: newLoc, destination: prev.destination, distance_km: res2.distance_km, duration_minutes: res2.duration_minutes };
+            segments.splice(locationIndex - 1, 1, seg1, seg2);
+        }
+    } catch (e) {
+        if (locationIndex === 0) {
+            segments.unshift({ type: defaultMode, origin: newLoc, destination: segments[0].origin, distance_km: 0, duration_minutes: 0 });
+        } else {
+            const prev = segments[locationIndex - 1];
+            segments.splice(locationIndex - 1, 1,
+                { type: defaultMode, origin: prev.origin, destination: newLoc, distance_km: 0, duration_minutes: 0 },
+                { type: defaultMode, origin: newLoc, destination: prev.destination, distance_km: 0, duration_minutes: 0 }
+            );
+        }
+    } finally {
+        document.getElementById('plan-timeline').style.opacity = '1';
+    }
+    ensureDayStayArray(activePlan.days[dayIdx]);
+    const stay = activePlan.days[dayIdx].location_stay_minutes;
+    if (stay && locationIndex >= 0 && locationIndex <= stay.length) {
+        stay.splice(locationIndex, 0, 0);
+    }
 }
 
 async function addSegment(origin, dest) {
@@ -1001,6 +1324,7 @@ async function addSegment(origin, dest) {
             duration_minutes: 0
         });
     }
+    ensureDayStayArray(activePlan.days[getCurrentDayIndex()]);
 }
 
 async function calculateSegmentData(origin, dest, mode) {
@@ -1019,8 +1343,79 @@ async function calculateSegmentData(origin, dest, mode) {
     return data;
 }
 
-// Transport Editing
+// --- 交通方式详情（查看时长/距离/航班车次等）---
+function openTransportDetailModal(index) {
+    const segment = activePlan?.days?.[getCurrentDayIndex()]?.segments?.[index];
+    if (!segment) return;
+    viewingDetailSegmentIndex = index;
+
+    const duration = segment.duration_minutes ? formatDuration(segment.duration_minutes * 60) : '--';
+    const distance = segment.distance_km ? `${segment.distance_km} km` : '--';
+    const dep = segment.details?.departure_time || segment.origin?.departure_time;
+    const arr = segment.details?.arrival_time || segment.destination?.arrival_time;
+    const isFlightOrTrain = segment.type === 'flight' || segment.type === 'train';
+
+    let typeLabel = '驾车';
+    let icon = 'fa-car';
+    if (segment.type === 'transit') {
+        typeLabel = (segment.details && segment.details.display_label === '城际交通') ? '城际交通' : '公交/地铁';
+        icon = 'fa-bus';
+    }
+    if (segment.type === 'walking') { typeLabel = '步行'; icon = 'fa-walking'; }
+    if (segment.type === 'cycling') { typeLabel = '骑行'; icon = 'fa-bicycle'; }
+    if (segment.type === 'flight') { typeLabel = segment.details?.flight_no || '航班'; icon = 'fa-plane'; }
+    if (segment.type === 'train') { typeLabel = segment.details?.train_no || '高铁/火车'; icon = 'fa-train'; }
+
+    const originName = segment.origin?.name || '起点';
+    const destName = segment.destination?.name || '终点';
+
+    let rows = [
+        `<div class="flex items-center gap-2 text-slate-800 font-medium"><i class="fas ${icon} text-cyan-600"></i> ${typeLabel}</div>`,
+        `<div class="flex justify-between"><span class="text-slate-400">起点</span><span>${originName}</span></div>`,
+        `<div class="flex justify-between"><span class="text-slate-400">终点</span><span>${destName}</span></div>`
+    ];
+    if (isFlightOrTrain) {
+        if (dep || arr) rows.push(`<div class="flex justify-between"><span class="text-slate-400">时间</span><span>${dep || '--'} → ${arr || '--'}</span></div>`);
+        if (segment.details?.seat_info) rows.push(`<div class="flex justify-between"><span class="text-slate-400">座位</span><span>${segment.details.seat_info}</span></div>`);
+        // Always show duration and distance for flight/train segments (even when no dep/arr times)
+        rows.push(`<div class="flex justify-between"><span class="text-slate-400">时长</span><span>${duration}</span></div>`);
+        rows.push(`<div class="flex justify-between"><span class="text-slate-400">距离</span><span>${distance}</span></div>`);
+    } else {
+        rows.push(`<div class="flex justify-between"><span class="text-slate-400">时长</span><span>${duration}</span></div>`);
+        rows.push(`<div class="flex justify-between"><span class="text-slate-400">距离</span><span>${distance}</span></div>`);
+    }
+
+    document.getElementById('transport-detail-content').innerHTML = rows.map(r => `<div class="py-1.5 border-b border-slate-100 last:border-0">${r}</div>`).join('');
+    const changeBtn = document.getElementById('transport-detail-change-btn');
+    // 票据导入的航班/火车（有 flight_no/train_no）不可更改，用户手动选的高铁可更改
+    const isImportedFixed = (segment.type === 'flight' && segment.details?.flight_no) || (segment.type === 'train' && segment.details?.train_no);
+    if (isImportedFixed) {
+        changeBtn.classList.add('hidden');
+    } else {
+        changeBtn.classList.remove('hidden');
+    }
+    document.getElementById('modal-transport-detail').classList.remove('hidden');
+}
+
+function closeTransportDetailModal() {
+    document.getElementById('modal-transport-detail').classList.add('hidden');
+    viewingDetailSegmentIndex = -1;
+}
+
+function openTransportModalFromDetail() {
+    const idx = viewingDetailSegmentIndex;
+    closeTransportDetailModal();
+    if (idx < 0) return;
+    openTransportModal(idx);
+}
+
+// Transport Editing（选择交通方式）
 function openTransportModal(index) {
+    const segment = activePlan?.days?.[getCurrentDayIndex()]?.segments?.[index];
+    // 仅票据导入的航班/火车（带车次或航班号）不可修改
+    if (segment && (segment.details?.flight_no || segment.details?.train_no)) {
+        return;
+    }
     editingSegmentIndex = index;
     document.getElementById('modal-select-transport').classList.remove('hidden');
 }
@@ -1069,16 +1464,22 @@ function removeLocation(index, isLast) {
     // Helper to handle async removal
     const handleRemoval = async () => {
         try {
+            const day = activePlan.days[getCurrentDayIndex()];
+            ensureDayStayArray(day);
+            const stay = day.location_stay_minutes;
             if (index === 0) {
                 // Removing start
                 if (segments.length === 1) {
                     activePlan.tempStartLocation = segments[0].destination;
                     segments.shift();
+                    if (stay.length > 0) stay.shift();
                 } else {
                     segments.shift();
+                    if (stay.length > 0) stay.shift();
                 }
             } else if (isLast) {
                 segments.pop();
+                if (stay.length > 0) stay.pop();
             } else {
                  // Removing middle node: Merge segments
                  const prevSeg = segments[index-1];
@@ -1087,6 +1488,7 @@ function removeLocation(index, isLast) {
                  const newOrigin = prevSeg.origin;
                  
                  segments.splice(index-1, 2);
+                 if (stay.length > index) stay.splice(index, 1);
                  
                  const res = await calculateSegmentData(newOrigin, newDest, 'driving');
                  segments.splice(index-1, 0, {
@@ -1141,6 +1543,32 @@ async function saveActivePlan() {
     } finally {
         saveBtn.innerHTML = originalContent;
         saveBtn.disabled = false;
+    }
+}
+
+/** 静默保存行程（不弹 toast、不更新按钮状态），用于后台自动补全数据后持久化 */
+async function saveActivePlanSilently() {
+    if (!activePlan) return;
+    const planToSave = JSON.parse(JSON.stringify(activePlan));
+    delete planToSave.tempStartLocation;
+    // 清理内部标记字段
+    (planToSave.days || []).forEach(d => {
+        (d.segments || []).forEach(seg => { delete seg._amapAttempted; });
+    });
+    try {
+        const response = await fetch('/travel/plans', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(planToSave)
+        });
+        if (response.ok) {
+            const saved = await response.json();
+            // 仅更新 id/timestamp，不覆盖内存中的标记
+            if (saved.id) activePlan.id = saved.id;
+            if (saved.created_at) activePlan.created_at = saved.created_at;
+        }
+    } catch (e) {
+        console.error('[auto-save]', e);
     }
 }
 

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     xhs_cookie: str = Field(default="", description="Xiaohongshu Cookie")
     xhs_mcp_dir: str = Field(default="", description="Directory for jobsonlook-xhs-mcp")
     xhs_mcp_url: str = Field(default="http://192.168.31.121:18060/mcp", description="Xiaohongshu MCP Streamable HTTP URL")
+    aigohotel_mcp_url: str = Field(default="", description="AigoHotel MCP Streamable HTTP URL (e.g. https://mcp.aigohotel.com/mcp)")
+    aigohotel_mcp_token: str = Field(default="", description="AigoHotel MCP Bearer token for Authorization header")
+    train_12306_mcp_url: str = Field(default="", description="12306 MCP URL for real train/rail schedule queries")
     
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")

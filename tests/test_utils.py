@@ -91,6 +91,7 @@ def print_config_info():
     print(f"  Amap MCP URL:   {settings.amap_mcp_url or '(not set)'}")
     print(f"  Weather MCP:    {settings.weather_mcp_url or '(not set)'}")
     print(f"  XHS MCP URL:    {settings.xhs_mcp_url or '(not set)'}")
+    print(f"  AigoHotel MCP:  {settings.aigohotel_mcp_url or '(not set)'}" + (" (token set)" if settings.aigohotel_mcp_token else ""))
 
 
 def print_result(result: TestResult):

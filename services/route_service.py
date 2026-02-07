@@ -3,25 +3,25 @@ Route Service - Handles geocoding, routing, and optimization using Amap REST API
 
 Uses direct HTTP calls to Amap Web Service API for best performance.
 Falls back to MCP only if direct API key is not configured.
+Uses 12306 MCP for real train/rail schedule data when available.
 """
 import logging
 import json
+import re
 import math
 import asyncio
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from api.models import TransportMode, Segment, Location as ApiLocation
 
 from services import amap_service
+from mcp_services.clients import get_mcp_manager
 
 logger = logging.getLogger(__name__)
 
-# 出行方式的最小合理距离（单位：公里）
-# 低于此距离时，该出行方式不合理，应提示用户换其他方式
-MODE_MIN_DISTANCE_KM = {
-    "flight": 200,   # 飞机：至少 200 公里
-    "train": 50,     # 火车/高铁：至少 50 公里
-}
+# 出行方式的最小合理距离（单位：公里），留空表示不限制，用户可自由选择高铁/飞机等
+MODE_MIN_DISTANCE_KM = {}
 
 # 出行方式的中文名称映射
 MODE_DISPLAY_NAME = {
@@ -33,6 +33,11 @@ MODE_DISPLAY_NAME = {
     "cycling": "骑行",
     "bicycling": "骑行",
 }
+
+
+def _as_dict(val) -> dict:
+    """Safely return val as a dict. Amap API sometimes returns [] instead of {} for empty objects."""
+    return val if isinstance(val, dict) else {}
 
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -226,41 +231,60 @@ class RouteService:
                             
             elif transits:
                 path = transits[0]
-                dist_val = float(path.get("distance", 0))
-                if dist_val == 0:
-                    dist_val = float(route_data.get("distance", 0))
-                
-                distance = dist_val / 1000.0
                 duration = float(path.get("duration", 0)) / 60.0
                 
-                # Extract transit details
+                # Extract transit details and accumulate real distance
+                # Note: Amap v3 API `transits[].distance` is walking distance only,
+                # NOT the total travel distance. We must sum up distances from all
+                # segment components (walking + bus/subway + railway) for accuracy.
                 segments_list = path.get("segments", [])
                 modes_found = []
+                accumulated_dist_m = 0.0  # Total distance in meters
+
                 for seg in segments_list:
-                    if seg.get("walking", {}).get("distance"):
-                        walk_dist = seg["walking"]["distance"]
-                        steps.append(f"步行 {walk_dist}米")
+                    walking = _as_dict(seg.get("walking"))
+                    bus = _as_dict(seg.get("bus"))
+                    railway = _as_dict(seg.get("railway"))
                     
-                    if seg.get("bus", {}).get("buslines"):
-                        line = seg["bus"]["buslines"][0]
-                        line_name = line["name"]
-                        dep = line.get("departure_stop", {}).get("name", "起点")
-                        arr = line.get("arrival_stop", {}).get("name", "终点")
+                    if walking.get("distance"):
+                        walk_dist = float(walking["distance"])
+                        accumulated_dist_m += walk_dist
+                        steps.append(f"步行 {int(walk_dist)}米")
+                    
+                    buslines = bus.get("buslines")
+                    if buslines:
+                        line = buslines[0]
+                        line_dist = float(line.get("distance", 0))
+                        accumulated_dist_m += line_dist
+                        line_name = line.get("name", "")
+                        dep = _as_dict(line.get("departure_stop")).get("name", "起点")
+                        arr = _as_dict(line.get("arrival_stop")).get("name", "终点")
                         
                         simple_name = line_name.split("(")[0].strip()
                         if simple_name not in modes_found:
                             modes_found.append(simple_name)
                         steps.append(f"乘坐 {simple_name} ({dep} 上车, {arr} 下车)")
                             
-                    elif seg.get("railway", {}).get("name"):
-                        r_name = seg["railway"]["name"]
-                        dep = seg["railway"].get("departure_stop", {}).get("name", "")
-                        arr = seg["railway"].get("arrival_stop", {}).get("name", "")
+                    elif railway.get("name"):
+                        r_name = railway["name"]
+                        rail_dist = float(railway.get("distance", 0))
+                        accumulated_dist_m += rail_dist
+                        dep = _as_dict(railway.get("departure_stop")).get("name", "")
+                        arr = _as_dict(railway.get("arrival_stop")).get("name", "")
                         
                         if r_name not in modes_found:
                             modes_found.append(r_name)
                         steps.append(f"乘坐 {r_name} ({dep} -> {arr})")
                 
+                # Use accumulated segment distance; fall back to route-level distance
+                if accumulated_dist_m > 0:
+                    distance = accumulated_dist_m / 1000.0
+                else:
+                    dist_val = float(path.get("distance", 0))
+                    if dist_val == 0:
+                        dist_val = float(route_data.get("distance", 0))
+                    distance = dist_val / 1000.0
+
                 if modes_found:
                     detailed_mode = " + ".join(modes_found)
                 else:
@@ -280,6 +304,163 @@ class RouteService:
 
         except Exception as e:
             logger.error(f"Error getting route from {origin.name} to {destination.name}: {e}")
+            return None
+
+    # ==================== 12306 MCP Integration ====================
+
+    def _generate_station_candidates(self, name: str, city: str = "") -> List[str]:
+        """
+        Generate candidate 12306 station names from a POI name.
+        E.g. "珠海金湾机场" → ["珠海金湾机场", "珠海机场"]
+             "珠海站"       → ["珠海站", "珠海"]
+             "广州南站"     → ["广州南站", "广州南"]
+        """
+        candidates = []
+        name = name.strip()
+        candidates.append(name)
+
+        # Remove common station suffixes
+        for suffix in ["火车站", "高铁站", "动车站", "站"]:
+            if name.endswith(suffix) and len(name) > len(suffix):
+                candidates.append(name[:-len(suffix)])
+                break
+
+        # For airports: "珠海金湾机场" → "珠海机场"
+        if "机场" in name:
+            city_short = city.rstrip("市省区县") if city else ""
+            if city_short:
+                airport_candidate = f"{city_short}机场"
+                if airport_candidate not in candidates:
+                    candidates.append(airport_candidate)
+
+        # Deduplicate while preserving order
+        seen = set()
+        result = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                result.append(c)
+        return result
+
+    async def _resolve_12306_station(self, name: str, city: str = "") -> Optional[Tuple[str, str]]:
+        """
+        Resolve a location name to a 12306 station (code, name).
+        Tries multiple candidate names. Returns (station_code, station_name) or None.
+        """
+        manager = get_mcp_manager()
+        if not manager.is_available("train_12306"):
+            return None
+
+        candidates = self._generate_station_candidates(name, city)
+        names_query = "|".join(candidates)
+
+        try:
+            result_str = await manager.call_tool(
+                "train_12306", "get-station-code-by-names",
+                {"stationNames": names_query}
+            )
+            result = json.loads(result_str)
+
+            # Return the first candidate that was found
+            for cand in candidates:
+                info = result.get(cand)
+                if info and info.get("station_code"):
+                    return (info["station_code"], info["station_name"])
+        except Exception as e:
+            logger.debug(f"12306 station lookup failed for '{name}': {e}")
+
+        # Fallback: search all stations in the city
+        if city:
+            try:
+                city_short = city.rstrip("市省区县")
+                result_str = await manager.call_tool(
+                    "train_12306", "get-stations-code-in-city",
+                    {"city": city_short}
+                )
+                stations = json.loads(result_str)
+                if isinstance(stations, list):
+                    # Try substring matching
+                    for s in stations:
+                        s_name = s.get("station_name", "")
+                        if s_name and (s_name in name or name in s_name):
+                            return (s["station_code"], s_name)
+            except Exception as e:
+                logger.debug(f"12306 city station lookup failed for '{city}': {e}")
+
+        return None
+
+    async def _query_train_12306(self, origin: 'Location', destination: 'Location') -> Optional[Dict[str, Any]]:
+        """
+        Query 12306 MCP for real train schedule data between two locations.
+        Returns dict with train info or None if unavailable.
+        """
+        manager = get_mcp_manager()
+        if not manager.is_available("train_12306"):
+            return None
+
+        try:
+            # 1. Resolve station codes (parallel)
+            origin_task = self._resolve_12306_station(origin.name, origin.city)
+            dest_task = self._resolve_12306_station(destination.name, destination.city)
+            origin_station, dest_station = await asyncio.gather(origin_task, dest_task)
+
+            if not origin_station or not dest_station:
+                logger.info(f"12306: Could not resolve stations for '{origin.name}' -> '{destination.name}'")
+                return None
+
+            origin_code, origin_sname = origin_station
+            dest_code, dest_sname = dest_station
+
+            # 2. Get tomorrow's date (today's trains may have already departed)
+            tz_cn = timezone(timedelta(hours=8))
+            tomorrow = (datetime.now(tz_cn) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            # 3. Query tickets
+            result_str = await manager.call_tool("train_12306", "get-tickets", {
+                "date": tomorrow,
+                "fromStation": origin_code,
+                "toStation": dest_code,
+                "format": "json",
+                "limitedNum": 5,
+            })
+            tickets = json.loads(result_str)
+
+            if not tickets or not isinstance(tickets, list):
+                logger.info(f"12306: No trains found {origin_sname} -> {dest_sname}")
+                return None
+
+            # 4. Pick the best (shortest duration) train
+            best = min(tickets, key=lambda t: t.get("lishi", "99:99"))
+            duration_str = best.get("lishi", "")  # e.g. "00:35"
+            duration_min = 0
+            if duration_str and ":" in duration_str:
+                parts = duration_str.split(":")
+                duration_min = int(parts[0]) * 60 + int(parts[1])
+
+            # Extract price from the first available seat type
+            price = 0
+            for p in best.get("prices", []):
+                if p.get("price"):
+                    price = int(p["price"])
+                    break
+
+            # Calculate approximate distance using haversine
+            distance_km = _haversine_km(origin.lat, origin.lng, destination.lat, destination.lng)
+
+            return {
+                "duration_minutes": duration_min,
+                "distance_km": round(distance_km, 1),
+                "cost_estimate": price,
+                "train_no": best.get("start_train_code", ""),
+                "from_station": best.get("from_station", origin_sname),
+                "to_station": best.get("to_station", dest_sname),
+                "departure_time": best.get("start_time", ""),
+                "arrival_time": best.get("arrive_time", ""),
+                "total_trains": len(tickets),
+            }
+
+        except Exception as e:
+            logger.warning(f"12306 query failed ({origin.name} -> {destination.name}): {e}")
             return None
 
     async def optimize_route(self, locations: List[str], city: str = "", strategy: str = "driving", preference: str = "time") -> Dict[str, Any]:
@@ -385,11 +566,10 @@ class RouteService:
         """
         Calculate details for a segment (distance, duration, cost).
         """
-        # 1. Resolve locations (parallel)
-        origin, dest = await asyncio.gather(
-            self.get_location_details(origin_name, city),
-            self.get_location_details(dest_name, city),
-        )
+        # 1. Resolve locations (串行 + 间隔，避免高德 QPS 超限 CUQPS_HAS_EXCEEDED_THE_LIMIT)
+        origin = await self.get_location_details(origin_name, city)
+        await asyncio.sleep(0.4)
+        dest = await self.get_location_details(dest_name, city)
         
         if not origin or not dest:
             return {"error": "Could not resolve locations"}
@@ -414,7 +594,36 @@ class RouteService:
                 "mode_requested": mode,
             }
 
-        # 3. Map mode to Amap direction API
+        # 3. For train mode, try 12306 MCP first for real rail data
+        if mode == "train":
+            train_data = await self._query_train_12306(origin, dest)
+            if train_data:
+                logger.info(f"12306: Found train {train_data['train_no']} "
+                            f"{train_data['from_station']} -> {train_data['to_station']} "
+                            f"{train_data['duration_minutes']}min")
+                return {
+                    "origin": {"name": origin.name, "lat": origin.lat, "lng": origin.lng, "address": origin.address, "city": origin.city},
+                    "destination": {"name": dest.name, "lat": dest.lat, "lng": dest.lng, "address": dest.address, "city": dest.city},
+                    "distance_km": train_data["distance_km"],
+                    "duration_minutes": train_data["duration_minutes"],
+                    "cost_estimate": train_data["cost_estimate"],
+                    "mode": "train",
+                    "details": {
+                        "train_no": train_data["train_no"],
+                        "from_station": train_data["from_station"],
+                        "to_station": train_data["to_station"],
+                        "departure_time": train_data.get("departure_time"),
+                        "arrival_time": train_data.get("arrival_time"),
+                        "total_trains": train_data.get("total_trains", 0),
+                        "transit_steps": [
+                            f"乘坐 {train_data['train_no']} ({train_data['from_station']} -> {train_data['to_station']})"
+                        ],
+                    }
+                }
+            else:
+                logger.info("12306: No train data, falling back to Amap transit API")
+
+        # 4. Map mode to Amap direction API (fallback for train, or primary for other modes)
         amap_mode = "driving"
         if mode in ["transit", "train", "flight"]:
             amap_mode = "transit"
@@ -428,7 +637,7 @@ class RouteService:
         if not segment:
             return {"error": "Could not calculate route"}
             
-        # 3. Estimate cost (Heuristics)
+        # 5. Estimate cost (Heuristics)
         cost = 0.0
         dist = segment.distance_km
         
