@@ -43,5 +43,6 @@ class Itinerary(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str
     days: List[DayPlan] = Field(default_factory=list)
+    start_location: Optional[Location] = None  # 创建行程时设置的起点
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())

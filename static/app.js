@@ -70,6 +70,9 @@ function closeMobileMenu() {
 }
 
 let currentPlanData = null;
+let selectedStartLocation = null;
+let startSearchResults = [];
+let startSearchTimer = null;
 
 // Route Planner Logic
 async function optimizeRoute() {
@@ -337,15 +340,88 @@ async function deletePlan(planId) {
     }
 }
 
+// --- Start Location Search (Create Plan) ---
+
+function handleStartLocationSearch(keyword) {
+    if (startSearchTimer) clearTimeout(startSearchTimer);
+    const resultsDiv = document.getElementById('start-location-results');
+
+    if (!keyword.trim()) {
+        resultsDiv.classList.add('hidden');
+        return;
+    }
+
+    startSearchTimer = setTimeout(async () => {
+        resultsDiv.classList.remove('hidden');
+        resultsDiv.innerHTML = '<div class="text-center py-3 text-slate-400 text-sm"><i class="fas fa-spinner fa-spin"></i> 搜索中...</div>';
+
+        try {
+            const response = await fetch(`/travel/locations/tips?keywords=${encodeURIComponent(keyword)}&city=`);
+            const data = await response.json();
+            startSearchResults = data;
+
+            if (data.length === 0) {
+                resultsDiv.innerHTML = '<div class="text-center py-3 text-slate-400 text-sm">未找到相关地点</div>';
+                return;
+            }
+
+            resultsDiv.innerHTML = data.map((item, idx) => `
+                <div onclick="pickStartLocation(${idx})" class="px-4 py-2.5 hover:bg-slate-50 cursor-pointer transition flex items-center gap-3 border-b border-slate-50 last:border-0">
+                    <i class="fas fa-map-pin text-slate-300 flex-shrink-0"></i>
+                    <div class="min-w-0">
+                        <div class="font-medium text-sm text-slate-800 truncate">${item.name}</div>
+                        <div class="text-xs text-slate-400 truncate">${item.district || ''} ${item.address || ''}</div>
+                    </div>
+                </div>
+            `).join('');
+        } catch (e) {
+            console.error(e);
+            resultsDiv.innerHTML = '<div class="text-center py-3 text-red-400 text-sm">搜索出错</div>';
+        }
+    }, 400);
+}
+
+function pickStartLocation(index) {
+    const item = startSearchResults[index];
+    selectedStartLocation = {
+        name: item.name,
+        address: item.address,
+        city: item.city || item.district || '',
+        lat: item.location ? parseFloat(item.location.split(',')[1]) : null,
+        lng: item.location ? parseFloat(item.location.split(',')[0]) : null
+    };
+
+    // Update UI: show selected badge, hide input
+    const addrHint = item.district || item.address || '';
+    document.getElementById('start-location-name').textContent = addrHint ? `${item.name}（${addrHint}）` : item.name;
+    document.getElementById('start-location-selected').classList.remove('hidden');
+    document.getElementById('start-location-results').classList.add('hidden');
+    document.getElementById('create-start-input-wrap').classList.add('hidden');
+}
+
+function clearStartLocation() {
+    selectedStartLocation = null;
+    document.getElementById('start-location-selected').classList.add('hidden');
+    document.getElementById('create-start-input-wrap').classList.remove('hidden');
+    document.getElementById('create-start-location').value = '';
+    document.getElementById('start-location-results').classList.add('hidden');
+}
+
 async function createNewPlan() {
-    document.getElementById('create-title').value = '';
     document.getElementById('create-date').valueAsDate = new Date();
     document.getElementById('create-days').value = 1;
+    clearStartLocation(); // Reset start location state
     showView('create-plan');
 }
 
 async function submitCreatePlan() {
-    let title = document.getElementById('create-title').value.trim();
+    // Validate starting point
+    if (!selectedStartLocation) {
+        showToast('请先搜索并选择出发起点', 'error');
+        document.getElementById('create-start-location').focus();
+        return;
+    }
+
     const startDateStr = document.getElementById('create-date').value;
     const totalDays = parseInt(document.getElementById('create-days').value) || 1;
 
@@ -355,11 +431,10 @@ async function submitCreatePlan() {
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 创建中...';
 
-    // Fallback title if empty
-    if (!title) {
-        const dateStr = new Date(startDateStr).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
-        title = `${dateStr}出发 · ${totalDays}日旅行`;
-    }
+    // Auto-generate title
+    const dateStr = new Date(startDateStr).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+    const cityName = selectedStartLocation.city || '';
+    const title = cityName ? `${cityName} · ${dateStr}出发 · ${totalDays}日旅行` : `${dateStr}出发 · ${totalDays}日旅行`;
 
     // Build Days
     const days = [];
@@ -369,7 +444,7 @@ async function submitCreatePlan() {
         days.push({
             day_index: i + 1,
             date: currentDate.toISOString().split('T')[0],
-            city: '',
+            city: selectedStartLocation.city || '',
             segments: []
         });
         currentDate.setDate(currentDate.getDate() + 1);
@@ -377,7 +452,14 @@ async function submitCreatePlan() {
 
     const newPlan = {
         title: title,
-        days: days
+        days: days,
+        start_location: {
+            name: selectedStartLocation.name,
+            lat: selectedStartLocation.lat,
+            lng: selectedStartLocation.lng,
+            address: selectedStartLocation.address,
+            city: selectedStartLocation.city
+        }
     };
 
     try {
@@ -393,6 +475,9 @@ async function submitCreatePlan() {
             activePlan = plan;
             
             if (!activePlan.days) activePlan.days = [];
+
+            // Set the selected starting point as the first location
+            activePlan.tempStartLocation = selectedStartLocation;
             
             showView('plan-detail');
             renderPlanDetail();
@@ -411,8 +496,84 @@ async function submitCreatePlan() {
 // --- Plan Detail Editor Logic ---
 
 let activePlan = null;
+let activeDetailTab = 0;  // 'overview' | 0-based 第几天，0=第1天
 let editingSegmentIndex = -1;
 let debounceTimer = null;
+
+/** 当前选中的是第几天（用于添加/编辑 segment），总览时默认第 1 天 */
+function getCurrentDayIndex() {
+    return activeDetailTab === 'overview' ? 0 : activeDetailTab;
+}
+
+function setPlanDayTab(tabValue) {
+    activeDetailTab = tabValue;
+    renderPlanDetail();
+}
+
+/** 根据出发日期、天数、起点等同步更新行程标题（格式：地点 · X月X日出发 · N日旅行） */
+function syncPlanTitleFromMeta() {
+    if (!activePlan || !activePlan.days.length) return;
+    const locationPart = (activePlan.start_location && activePlan.start_location.name)
+        ? activePlan.start_location.name
+        : (activePlan.title && activePlan.title.includes(' · '))
+            ? activePlan.title.split(' · ')[0].trim()
+            : '';
+    const dateStr = activePlan.days[0].date
+        ? new Date(activePlan.days[0].date).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+        : '';
+    const dayCount = activePlan.days.length;
+    activePlan.title = locationPart
+        ? `${locationPart} · ${dateStr}出发 · ${dayCount}日旅行`
+        : `${dateStr}出发 · ${dayCount}日旅行`;
+}
+
+/** 修改出发日期：重算所有天的 date，并同步标题 */
+function updatePlanDepartureDate(dateStr) {
+    if (!activePlan || !dateStr || !activePlan.days.length) return;
+    const start = new Date(dateStr);
+    activePlan.days.forEach((day, i) => {
+        const d = new Date(start);
+        d.setDate(d.getDate() + i);
+        day.date = d.toISOString().split('T')[0];
+    });
+    syncPlanTitleFromMeta();
+    renderPlanDetail();
+}
+
+/** 修改旅游天数：增删末尾的天 */
+function updatePlanDaysCount(newCount) {
+    if (!activePlan || newCount < 1 || newCount > 30) return;
+    const current = activePlan.days.length;
+    if (newCount === current) return;
+
+    if (newCount < current) {
+        const toRemove = activePlan.days.slice(newCount);
+        const hasContent = toRemove.some(d => (d.segments && d.segments.length > 0));
+        if (hasContent && !confirm(`将删除第 ${newCount + 1}～${current} 天的行程内容，确定继续？`)) {
+            document.getElementById('detail-total-days').value = current;
+            return;
+        }
+        activePlan.days.length = newCount;
+        if (activeDetailTab !== 'overview' && activeDetailTab >= newCount) {
+            activeDetailTab = newCount - 1;
+        }
+    } else {
+        const lastDate = activePlan.days[activePlan.days.length - 1].date;
+        const base = lastDate ? new Date(lastDate) : new Date();
+        for (let i = current; i < newCount; i++) {
+            const d = new Date(base);
+            d.setDate(d.getDate() + (i - current + 1));
+            activePlan.days.push({
+                day_index: i + 1,
+                date: d.toISOString().split('T')[0],
+                city: activePlan.days[0].city || '',
+                segments: []
+            });
+        }
+    }
+    syncPlanTitleFromMeta();
+    renderPlanDetail();
+}
 
 async function viewPlan(planId) {
     try {
@@ -424,8 +585,9 @@ async function viewPlan(planId) {
         // Ensure data structure integrity
         if (!activePlan.days) activePlan.days = [];
         if (activePlan.days.length === 0) activePlan.days.push({ day_index: 1, segments: [] });
-        if (!activePlan.days[0].segments) activePlan.days[0].segments = [];
+        activePlan.days.forEach(d => { if (!d.segments) d.segments = []; });
         
+        activeDetailTab = 0;  // 默认选中第 1 天
         showView('plan-detail');
         renderPlanDetail();
     } catch (error) {
@@ -437,26 +599,68 @@ async function viewPlan(planId) {
 function renderPlanDetail() {
     const titleEl = document.getElementById('detail-title');
     const subtitleEl = document.getElementById('detail-subtitle');
+    const tabsWrap = document.getElementById('plan-day-tabs');
     const timelineEl = document.getElementById('plan-timeline');
     
     titleEl.textContent = activePlan.title || '未命名行程';
     const dayCount = activePlan.days.length;
     const spotCount = activePlan.days.reduce((acc, day) => {
-        // Approximate spots: segments + 1
         return acc + (day.segments.length > 0 ? day.segments.length + 1 : 0);
     }, 0);
     subtitleEl.textContent = `${dayCount} 天 · ${spotCount} 个地点`;
 
-    // Render Timeline
-    const segments = activePlan.days[0].segments;
+    // 同步出发日期、旅游天数控件
+    const departureInput = document.getElementById('detail-departure-date');
+    const daysInput = document.getElementById('detail-total-days');
+    if (departureInput && activePlan.days[0].date) departureInput.value = activePlan.days[0].date;
+    if (daysInput) daysInput.value = activePlan.days.length;
+
+    // 渲染日期 Tab 栏：总览、第1天、第2天...
+    const tabValues = ['overview', ...activePlan.days.map((_, i) => i)];
+    const tabLabels = ['总览', ...activePlan.days.map((d, i) => `第 ${i + 1} 天`)];
+    let tabsHtml = '';
+    tabValues.forEach((val, i) => {
+        const isActive = activeDetailTab === val;
+        const label = tabLabels[i];
+        tabsHtml += `<button type="button" onclick="setPlanDayTab(${val === 'overview' ? "'overview'" : val})"
+            class="flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition whitespace-nowrap
+            ${isActive ? 'bg-primary text-white shadow-md' : 'bg-white border border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50'}">${label}</button>`;
+    });
+    tabsWrap.innerHTML = tabsHtml;
+
+    // 总览：展示每天摘要
+    if (activeDetailTab === 'overview') {
+        let overviewHtml = '<div class="space-y-4">';
+        activePlan.days.forEach((day, dayIdx) => {
+            const segs = day.segments || [];
+            const count = segs.length > 0 ? segs.length + 1 : 0;
+            const dateStr = day.date ? new Date(day.date).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' }) : `第 ${dayIdx + 1} 天`;
+            overviewHtml += `
+                <div onclick="setPlanDayTab(${dayIdx})" class="bg-white rounded-xl border border-slate-200 p-4 cursor-pointer hover:border-primary hover:shadow-md transition">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-slate-800">第 ${dayIdx + 1} 天</span>
+                        <span class="text-sm text-slate-500">${dateStr}</span>
+                    </div>
+                    <p class="text-sm text-slate-500 mt-1">${count} 个地点</p>
+                </div>`;
+        });
+        overviewHtml += '</div>';
+        timelineEl.innerHTML = overviewHtml;
+        return;
+    }
+
+    // 单日时间线
+    const dayIndex = activeDetailTab;
+    const day = activePlan.days[dayIndex];
+    const segments = day.segments;
     
     if (segments.length === 0) {
-        // Check if we have a start location stored (temporary state)
-        if (activePlan.tempStartLocation) {
-             timelineEl.innerHTML = `
+        const startLocation = (dayIndex === 0) ? (activePlan.start_location || activePlan.tempStartLocation) : null;
+        if (startLocation) {
+            timelineEl.innerHTML = `
                 <div class="relative pl-8">
                     <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-slate-200"></div>
-                    ${renderLocationCard(activePlan.tempStartLocation, 0, true)}
+                    ${renderLocationCard(startLocation, 0, true, dayIndex === 0 ? '起点' : null)}
                     <div class="mt-8 text-center text-slate-400 text-sm bg-slate-50 p-4 rounded-lg border border-dashed border-slate-300">
                         <i class="fas fa-arrow-down mb-2 block"></i>
                         点击右下角 "+" 添加下一个地点
@@ -464,13 +668,14 @@ function renderPlanDetail() {
                 </div>
             `;
         } else {
-             timelineEl.innerHTML = `
-                <div class="text-center py-20 text-slate-400">
-                    <div class="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-map-signs text-3xl text-slate-300"></i>
+            timelineEl.innerHTML = `
+                <div class="relative pl-8">
+                    <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-slate-200"></div>
+                    ${renderLocationCard(null, 0, true, null)}
+                    <div class="mt-8 text-center text-slate-400 text-sm bg-slate-50 p-4 rounded-lg border border-dashed border-slate-300">
+                        <i class="fas fa-arrow-down mb-2 block"></i>
+                        点击右下角 "+" 添加下一个地点
                     </div>
-                    <p>还没有添加任何地点</p>
-                    <p class="text-sm mt-2">点击右下角 "+" 开始规划</p>
                 </div>
             `;
         }
@@ -479,26 +684,24 @@ function renderPlanDetail() {
 
     let html = `<div class="relative pl-8 pb-4">
         <div class="absolute left-[11px] top-4 bottom-4 w-0.5 bg-slate-200"></div>`;
-    
-    // Render loop
     segments.forEach((seg, index) => {
-        // Origin
-        html += renderLocationCard(seg.origin, index);
-        
-        // Transport Connector
+        const isFirst = index === 0;
+        const isLastSeg = index === segments.length - 1;
+        html += renderLocationCard(seg.origin, index, false, isFirst && dayIndex === 0 ? '起点' : null);
         html += renderTransportConnector(seg, index);
-        
-        // If last segment, render destination
-        if (index === segments.length - 1) {
-            html += renderLocationCard(seg.destination, index + 1, true);
+        if (isLastSeg) {
+            html += renderLocationCard(seg.destination, index + 1, true, '终点');
         }
     });
-
     html += `</div>`;
     timelineEl.innerHTML = html;
 }
 
-function renderLocationCard(location, index, isLast = false) {
+function renderLocationCard(location, index, isLast = false, roleLabel = null) {
+    const safeLoc = location || {};
+    const name = safeLoc.name || (roleLabel === '起点' ? '起点（待补充）' : roleLabel === '终点' ? '终点（待补充）' : '未知地点');
+    const address = safeLoc.address || safeLoc.city || '未知地址';
+    const labelHtml = roleLabel ? `<span class="inline-block px-2 py-0.5 rounded text-xs font-medium ${roleLabel === '起点' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'} ml-2">${roleLabel}</span>` : '';
     return `
         <div class="relative mb-6 group">
             <div class="absolute -left-[41px] top-0 w-6 h-6 rounded-full border-2 border-white shadow-md z-10 
@@ -508,9 +711,9 @@ function renderLocationCard(location, index, isLast = false) {
             <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition">
                 <div class="flex justify-between items-start">
                     <div>
-                        <h4 class="font-bold text-slate-800">${location.name}</h4>
+                        <h4 class="font-bold text-slate-800 flex items-center flex-wrap gap-1">${name}${labelHtml}</h4>
                         <p class="text-xs text-slate-500 mt-1 truncate max-w-[200px] md:max-w-md">
-                            <i class="fas fa-map-marker-alt mr-1"></i> ${location.address || location.city || '未知地址'}
+                            <i class="fas fa-map-marker-alt mr-1"></i> ${address}
                         </p>
                     </div>
                     <button class="text-slate-300 hover:text-red-500 transition px-2" onclick="removeLocation(${index}, ${isLast})">
@@ -577,7 +780,7 @@ function handleLocationSearch(keyword) {
         container.innerHTML = '<div class="text-center py-4 text-slate-400"><i class="fas fa-spinner fa-spin"></i> 搜索中...</div>';
         
         try {
-            const city = activePlan.days[0].city || ''; 
+            const city = activePlan.days[getCurrentDayIndex()].city || ''; 
             const response = await fetch(`/travel/locations/tips?keywords=${encodeURIComponent(keyword)}&city=${encodeURIComponent(city)}`);
             const data = await response.json();
             
@@ -612,15 +815,15 @@ async function selectLocation(locationData) {
     const newLoc = {
         name: locationData.name,
         address: locationData.address,
-        city: locationData.city || activePlan.days[0].city || '',
+        city: locationData.city || activePlan.days[getCurrentDayIndex()].city || '',
         lat: locationData.location ? parseFloat(locationData.location.split(',')[1]) : null,
         lng: locationData.location ? parseFloat(locationData.location.split(',')[0]) : null
     };
 
     // Case 1: Empty Plan, no temp start
-    if (activePlan.days[0].segments.length === 0 && !activePlan.tempStartLocation) {
+    if (activePlan.days[getCurrentDayIndex()].segments.length === 0 && !activePlan.tempStartLocation) {
         activePlan.tempStartLocation = newLoc;
-        if (newLoc.city) activePlan.days[0].city = newLoc.city; // Set plan city context
+        if (newLoc.city) activePlan.days[getCurrentDayIndex()].city = newLoc.city;
         renderPlanDetail();
         return;
     }
@@ -634,7 +837,7 @@ async function selectLocation(locationData) {
     }
 
     // Case 3: Have segments, append to last destination
-    const lastSeg = activePlan.days[0].segments[activePlan.days[0].segments.length - 1];
+    const lastSeg = activePlan.days[getCurrentDayIndex()].segments[activePlan.days[getCurrentDayIndex()].segments.length - 1];
     await addSegment(lastSeg.destination, newLoc);
     renderPlanDetail();
 }
@@ -655,11 +858,10 @@ async function addSegment(origin, dest) {
             duration_minutes: result.duration_minutes
         };
         
-        activePlan.days[0].segments.push(newSegment);
+        activePlan.days[getCurrentDayIndex()].segments.push(newSegment);
     } catch (e) {
         alert('无法计算路线: ' + e.message);
-        // Add anyway but with empty data
-         activePlan.days[0].segments.push({
+        activePlan.days[getCurrentDayIndex()].segments.push({
             type: defaultMode,
             origin: origin,
             destination: dest,
@@ -677,7 +879,7 @@ async function calculateSegmentData(origin, dest, mode) {
             origin: origin.name,
             destination: dest.name,
             mode: mode,
-            city: activePlan.days[0].city
+            city: activePlan.days[getCurrentDayIndex()].city
         })
     });
     const data = await response.json();
@@ -699,7 +901,7 @@ async function selectTransportMode(mode) {
     closeTransportModal();
     if (editingSegmentIndex === -1) return;
     
-    const segment = activePlan.days[0].segments[editingSegmentIndex];
+    const segment = activePlan.days[getCurrentDayIndex()].segments[editingSegmentIndex];
     if (segment.type === mode) return; // No change
 
     // Show loading for the specific connector
@@ -727,7 +929,7 @@ function removeLocation(index, isLast) {
         return;
     }
     
-    const segments = activePlan.days[0].segments;
+    const segments = activePlan.days[getCurrentDayIndex()].segments;
     
     // Show loading
     document.getElementById('plan-timeline').style.opacity = '0.5';
@@ -808,6 +1010,33 @@ async function saveActivePlan() {
         saveBtn.innerHTML = originalContent;
         saveBtn.disabled = false;
     }
+}
+
+// --- Title Inline Edit ---
+function startEditTitle() {
+    const titleEl = document.getElementById('detail-title');
+    const inputEl = document.getElementById('detail-title-input');
+    const titleGroup = titleEl.closest('.group\\/title');
+
+    inputEl.value = activePlan.title || '';
+    titleGroup.classList.add('hidden');
+    inputEl.classList.remove('hidden');
+    inputEl.focus();
+    inputEl.select();
+}
+
+function finishEditTitle() {
+    const titleEl = document.getElementById('detail-title');
+    const inputEl = document.getElementById('detail-title-input');
+    const titleGroup = titleEl.closest('.group\\/title');
+
+    const newTitle = inputEl.value.trim();
+    if (newTitle && activePlan) {
+        activePlan.title = newTitle;
+        titleEl.textContent = newTitle;
+    }
+    inputEl.classList.add('hidden');
+    titleGroup.classList.remove('hidden');
 }
 
 // Toast Notification Helper
