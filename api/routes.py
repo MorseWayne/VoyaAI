@@ -313,6 +313,26 @@ async def delete_plan(plan_id: str):
         logger.error(f"Error deleting plan: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class ParseTicketRequest(BaseModel):
+    """Request body for ticket screenshot parsing (base64 image)."""
+    image_base64: str = Field(..., description="Base64-encoded image, with or without data:image/...;base64, prefix")
+
+
+@router.post("/travel/parse-ticket")
+async def parse_ticket(request: ParseTicketRequest):
+    """
+    Parse a flight/train ticket screenshot and return structured data.
+    Accepts base64 image; uses vision LLM to extract origin, destination, times, flight_no/train_no.
+    """
+    from services.ticket_parser_service import parse_ticket_image
+    try:
+        result = await parse_ticket_image(request.image_base64)
+        return result
+    except Exception as e:
+        logger.exception(f"Parse ticket error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class SegmentCalculationRequest(BaseModel):
     origin: str
     destination: str

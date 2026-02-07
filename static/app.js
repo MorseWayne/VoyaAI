@@ -728,12 +728,18 @@ function renderLocationCard(location, index, isLast = false, roleLabel = null) {
 function renderTransportConnector(segment, index) {
     const duration = segment.duration_minutes ? formatDuration(segment.duration_minutes * 60) : '--';
     const distance = segment.distance_km ? `${segment.distance_km}km` : '--';
-    
+    const dep = segment.details?.departure_time || segment.origin?.departure_time;
+    const arr = segment.details?.arrival_time || segment.destination?.arrival_time;
+    const timeRange = (dep && arr) ? `${dep} → ${arr}` : (dep || arr || '');
+    const rightText = (segment.type === 'flight' || segment.type === 'train') && timeRange ? timeRange : `${duration} · ${distance}`;
+
     let icon = 'fa-car';
     let label = '驾车';
     if (segment.type === 'transit') { icon = 'fa-bus'; label = '公交'; }
     if (segment.type === 'walking') { icon = 'fa-walking'; label = '步行'; }
     if (segment.type === 'cycling') { icon = 'fa-bicycle'; label = '骑行'; }
+    if (segment.type === 'flight') { icon = 'fa-plane'; label = segment.details?.flight_no || '航班'; }
+    if (segment.type === 'train') { icon = 'fa-train'; label = segment.details?.train_no || '高铁/火车'; }
 
     return `
         <div class="ml-4 mb-6 relative">
@@ -745,12 +751,138 @@ function renderTransportConnector(segment, index) {
                 </div>
                 <div class="w-px h-3 bg-slate-300"></div>
                 <div class="text-xs text-slate-500 font-mono">
-                    ${duration} · ${distance}
+                    ${rightText}
                 </div>
                 <i class="fas fa-chevron-right text-[10px] text-slate-300 ml-1"></i>
             </div>
         </div>
     `;
+}
+
+// --- 截图导入航班/车票 ---
+let ticketImportImageBase64 = null;
+let ticketImportPasteHandler = null;
+
+function showTicketImportModal() {
+    ticketImportImageBase64 = null;
+    document.getElementById('modal-ticket-import').classList.remove('hidden');
+    document.getElementById('ticket-import-placeholder').classList.remove('hidden');
+    document.getElementById('ticket-import-preview').classList.add('hidden');
+    document.getElementById('ticket-import-preview').src = '';
+    document.getElementById('ticket-import-submit').disabled = true;
+    document.getElementById('ticket-import-submit').classList.add('opacity-50', 'cursor-not-allowed');
+    document.getElementById('ticket-import-status').classList.add('hidden');
+    document.getElementById('ticket-import-error').classList.add('hidden');
+    document.getElementById('ticket-import-file').value = '';
+
+    document.getElementById('ticket-import-drop').onclick = () => document.getElementById('ticket-import-file').click();
+    document.getElementById('ticket-import-file').onchange = (e) => {
+        const f = e.target.files[0];
+        if (f && f.type.startsWith('image/')) setTicketImageFromFile(f);
+    };
+
+    ticketImportPasteHandler = (e) => {
+        if (!document.getElementById('modal-ticket-import').classList.contains('hidden') && e.clipboardData?.files?.length) {
+            const f = Array.from(e.clipboardData.files).find(f => f.type.startsWith('image/'));
+            if (f) { e.preventDefault(); setTicketImageFromFile(f); }
+        }
+    };
+    window.addEventListener('paste', ticketImportPasteHandler);
+}
+
+function closeTicketImportModal() {
+    document.getElementById('modal-ticket-import').classList.add('hidden');
+    if (ticketImportPasteHandler) window.removeEventListener('paste', ticketImportPasteHandler);
+    ticketImportPasteHandler = null;
+    ticketImportImageBase64 = null;
+}
+
+function setTicketImageFromFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+        ticketImportImageBase64 = reader.result;
+        document.getElementById('ticket-import-placeholder').classList.add('hidden');
+        document.getElementById('ticket-import-preview').classList.remove('hidden');
+        document.getElementById('ticket-import-preview').src = ticketImportImageBase64;
+        document.getElementById('ticket-import-submit').disabled = false;
+        document.getElementById('ticket-import-submit').classList.remove('opacity-50', 'cursor-not-allowed');
+    };
+    reader.readAsDataURL(file);
+}
+
+async function submitTicketImport() {
+    if (!ticketImportImageBase64 || !activePlan) return;
+    const statusEl = document.getElementById('ticket-import-status');
+    const errorEl = document.getElementById('ticket-import-error');
+    const btn = document.getElementById('ticket-import-submit');
+    statusEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    statusEl.textContent = '正在识别票据…';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/travel/parse-ticket', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_base64: ticketImportImageBase64 })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '请求失败');
+
+        if (data.type === 'unknown' || data.error) {
+            errorEl.textContent = data.error || '无法识别为机票或火车票';
+            errorEl.classList.remove('hidden');
+            statusEl.classList.add('hidden');
+            btn.disabled = false;
+            return;
+        }
+
+        const dayIdx = getCurrentDayIndex();
+        const origin = {
+            name: data.origin_name || '出发地',
+            address: null,
+            city: null,
+            lat: null,
+            lng: null,
+            departure_time: data.departure_time || null,
+            arrival_time: null
+        };
+        const destination = {
+            name: data.destination_name || '目的地',
+            address: null,
+            city: null,
+            lat: null,
+            lng: null,
+            departure_time: null,
+            arrival_time: data.arrival_time || null
+        };
+        const details = {};
+        if (data.flight_no) details.flight_no = data.flight_no;
+        if (data.train_no) details.train_no = data.train_no;
+        if (data.seat_info) details.seat_info = data.seat_info;
+        if (data.departure_time) details.departure_time = data.departure_time;
+        if (data.arrival_time) details.arrival_time = data.arrival_time;
+
+        const segment = {
+            type: data.type === 'train' ? 'train' : 'flight',
+            origin,
+            destination,
+            distance_km: null,
+            duration_minutes: null,
+            details
+        };
+        activePlan.days[dayIdx].segments.push(segment);
+
+        statusEl.textContent = '已加入当天行程';
+        closeTicketImportModal();
+        renderPlanDetail();
+    } catch (e) {
+        console.error(e);
+        errorEl.textContent = e.message || '识别失败，请重试';
+        errorEl.classList.remove('hidden');
+        statusEl.classList.add('hidden');
+    }
+    btn.disabled = false;
 }
 
 // --- Interaction Logic ---

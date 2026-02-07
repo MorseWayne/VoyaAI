@@ -20,3 +20,7 @@ aiofiles>=23.2.1
 
 # Utilities
 jinja2>=3.1.0
+
+# OCR 轻量方案：先 OCR 再 LLM 解析文字，无需 PyTorch
+Pillow>=10.0.0
+rapidocr_onnxruntime>=1.3.0
