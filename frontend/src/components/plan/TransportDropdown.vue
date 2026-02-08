@@ -15,6 +15,7 @@ const modes = [
   { mode: 'driving', icon: 'fa-car', label: '驾车' },
   { mode: 'transit', icon: 'fa-bus', label: '公交/地铁' },
   { mode: 'train', icon: 'fa-train', label: '高铁/火车' },
+  { mode: 'flight', icon: 'fa-plane', label: '飞机' },
   { mode: 'walking', icon: 'fa-walking', label: '步行' },
   { mode: 'cycling', icon: 'fa-bicycle', label: '骑行' },
 ]

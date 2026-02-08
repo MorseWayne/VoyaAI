@@ -19,6 +19,57 @@ export const usePlanStore = defineStore('plan', () => {
     return activeDetailTab.value === 'overview' ? 0 : activeDetailTab.value
   }
 
+  /** Get the effective end location of a day (last segment destination, or start if no segments). */
+  function getDayEndLocation(dayIndex) {
+    const days = activePlan.value?.days || []
+    const day = days[dayIndex]
+    if (!day) return null
+    const segs = day.segments || []
+    if (segs.length > 0) return segs[segs.length - 1].destination
+    return getDayStartLocation(dayIndex)
+  }
+
+  /** Get the effective start location of a day (plan start / day start_location / or previous day end). */
+  function getDayStartLocation(dayIndex) {
+    const days = activePlan.value?.days || []
+    if (dayIndex === 0) return activePlan.value?.start_location ?? null
+    const day = days[dayIndex]
+    if (!day) return null
+    if (day.start_location) return day.start_location
+    return getDayEndLocation(dayIndex - 1)
+  }
+
+  /** Set the start location for a day (day 0 → plan.start_location; day N → days[N].start_location). */
+  function setDayStartLocation(dayIndex, loc) {
+    if (!activePlan.value) return
+    const locObj = {
+      name: loc.name,
+      lat: loc.lat,
+      lng: loc.lng,
+      address: loc.address,
+      city: loc.city,
+    }
+    if (dayIndex === 0) {
+      activePlan.value.start_location = locObj
+    } else {
+      const day = activePlan.value.days[dayIndex]
+      if (day) day.start_location = locObj
+    }
+  }
+
+  /** Sync tempStartLocation to the current day's effective start when that day has no segments. */
+  function syncTempStartLocationForCurrentDay() {
+    const dayIdx = getCurrentDayIndex()
+    const days = activePlan.value?.days || []
+    const day = days[dayIdx]
+    const hasSegments = day?.segments?.length > 0
+    if (hasSegments) {
+      tempStartLocation.value = null
+      return
+    }
+    tempStartLocation.value = getDayStartLocation(dayIdx) || null
+  }
+
   /** Save the active plan silently (no UI feedback) */
   async function saveActivePlanSilently() {
     if (!activePlan.value) return
@@ -251,6 +302,42 @@ export const usePlanStore = defineStore('plan', () => {
     segment.duration_minutes = result.duration_minutes
   }
 
+  /** Replace a segment with flight/train ticket data (e.g. after uploading ticket screenshot). */
+  function replaceSegmentWithTicketData(segmentIndex, ticketData) {
+    const dayIdx = getCurrentDayIndex()
+    const segments = activePlan.value?.days?.[dayIdx]?.segments
+    if (!segments || segmentIndex < 0 || segmentIndex >= segments.length) return
+    const segment = segments[segmentIndex]
+
+    const originLoc = {
+      ...segment.origin,
+      name: ticketData.departure_station || ticketData.origin_name || segment.origin?.name || '出发地',
+      city: ticketData.departure_city || ticketData.origin_city || segment.origin?.city || '',
+      departure_time: ticketData.departure_time,
+    }
+    const destLoc = {
+      ...segment.destination,
+      name: ticketData.arrival_station || ticketData.destination_name || segment.destination?.name || '目的地',
+      city: ticketData.arrival_city || ticketData.destination_city || segment.destination?.city || '',
+      arrival_time: ticketData.arrival_time,
+    }
+    const durationMin = ticketData.duration_seconds ? Math.round(ticketData.duration_seconds / 60) : (segment.duration_minutes || 0)
+
+    segment.type = ticketData.type || 'flight'
+    segment.origin = originLoc
+    segment.destination = destLoc
+    segment.distance_km = ticketData.distance_km ?? segment.distance_km ?? 0
+    segment.duration_minutes = durationMin
+    segment.details = {
+      flight_no: ticketData.flight_no,
+      train_no: ticketData.train_no,
+      departure_time: ticketData.departure_time,
+      arrival_time: ticketData.arrival_time,
+      seat_info: ticketData.seat_info,
+    }
+    saveActivePlanSilently()
+  }
+
   /** Reorder locations within a day */
   async function reorderLocations(dayIndex, fromIndex, toIndex) {
     const day = activePlan.value.days[dayIndex]
@@ -311,6 +398,10 @@ export const usePlanStore = defineStore('plan', () => {
     currentPlanData,
     tempStartLocation,
     getCurrentDayIndex,
+    getDayStartLocation,
+    getDayEndLocation,
+    setDayStartLocation,
+    syncTempStartLocationForCurrentDay,
     saveActivePlanSilently,
     saveActivePlan,
     syncPlanTitleFromMeta,
@@ -321,6 +412,7 @@ export const usePlanStore = defineStore('plan', () => {
     insertSegmentAt,
     removeLocation,
     changeTransportMode,
+    replaceSegmentWithTicketData,
     reorderLocations,
   }
 })

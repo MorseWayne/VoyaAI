@@ -10,9 +10,10 @@ const props = defineProps({
   stayMinutes: { type: Number, default: 0 },
   dayIndex: { type: Number, default: 0 },
   departureHm: { type: String, default: null },
+  canEditStart: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['insert', 'remove', 'updateStay'])
+const emit = defineEmits(['insert', 'remove', 'updateStay', 'editStart'])
 
 const name = computed(() => {
   if (props.location?.name) return props.location.name
@@ -101,6 +102,16 @@ function onStayChange(e) {
 
           <!-- Actions -->
           <div class="flex flex-col gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200" @click.stop>
+            <button
+              v-if="canEditStart"
+              type="button"
+              class="w-8 h-8 flex items-center justify-center rounded-lg text-amber-600 hover:bg-amber-500 hover:text-white transition shadow-sm"
+              style="background: var(--nav-active-bg);"
+              @click="emit('editStart')"
+              title="修改起点"
+            >
+              <i class="fas fa-edit text-xs"></i>
+            </button>
             <button
               type="button"
               class="w-8 h-8 flex items-center justify-center rounded-lg text-cyan-600 hover:bg-cyan-500 hover:text-white transition shadow-sm"

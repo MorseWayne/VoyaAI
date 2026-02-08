@@ -5,6 +5,7 @@ import BaseModal from '@/components/common/BaseModal.vue'
 
 const props = defineProps({
   show: Boolean,
+  title: { type: String, default: '添加行程地点' },
   city: { type: String, default: '' },
   insertAtIndex: { type: [Number, null], default: null },
 })
@@ -49,7 +50,7 @@ function onClose() {
 </script>
 
 <template>
-  <BaseModal :show="show" title="添加行程地点" @close="onClose">
+  <BaseModal :show="show" :title="title" @close="onClose">
     <div class="relative mb-4">
       <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 t-text-muted"></i>
       <input

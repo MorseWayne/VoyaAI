@@ -69,9 +69,9 @@ export function timeStringToMinutes(str) {
   return d.getHours() * 60 + d.getMinutes()
 }
 
-/** Check if a segment has imported ticket times (flight/train with dep + arr times) */
+/** Check if a segment has imported ticket times (dep + arr times), regardless of stored type. */
 export function segmentHasTicketTimes(seg) {
-  if (!seg || (seg.type !== 'flight' && seg.type !== 'train')) return false
+  if (!seg) return false
   const dep = seg.details?.departure_time || seg.origin?.departure_time
   const arr = seg.details?.arrival_time || seg.destination?.arrival_time
   return !!(dep && arr && timeStringToMinutes(dep) != null && timeStringToMinutes(arr) != null)

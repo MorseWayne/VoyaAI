@@ -26,6 +26,7 @@ const loading = ref(true)
 // Modal states
 const showAddModal = ref(false)
 const addInsertIndex = ref(null)
+const addModalMode = ref('add') // 'add' | 'replaceStart'
 const showTicketModal = ref(false)
 const showTransportDetail = ref(false)
 const transportDetailSegment = ref(null)
@@ -33,6 +34,8 @@ const transportDetailIndex = ref(-1)
 const showTransportDropdown = ref(false)
 const transportDropdownRect = ref(null)
 const transportDropdownSegIndex = ref(-1)
+/** When set, ticket modal is in "replace this segment with flight" mode; must upload flight ticket. */
+const flightTicketReplaceSegIndex = ref(null)
 
 // Auto-save timer
 let saveTimer = null
@@ -70,6 +73,7 @@ onMounted(async () => {
     planStore.activeDetailTab = 0
     // Ensure stay arrays exist
     plan.value?.days?.forEach(d => ensureDayStayArray(d))
+    planStore.syncTempStartLocationForCurrentDay()
   } catch (e) {
     ui.showToast('加载行程失败', 'error')
     router.push({ name: 'plans' })
@@ -81,6 +85,16 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer)
 })
+
+// 切换日期时，当天的起点继承上一天终点（或已保存的当日起点）
+watch(
+  () => planStore.activeDetailTab,
+  () => {
+    if (!plan.value?.days?.length) return
+    planStore.syncTempStartLocationForCurrentDay()
+  },
+  { immediate: false },
+)
 
 // Auto-save on changes
 watch(
@@ -121,8 +135,33 @@ function updateStay(dayIndex, locationIndex, val) {
 
 // Add location via modal
 function openAddModal(insertIndex = null) {
+  addModalMode.value = 'add'
   addInsertIndex.value = insertIndex
   showAddModal.value = true
+}
+
+function openReplaceStartModal() {
+  addModalMode.value = 'replaceStart'
+  addInsertIndex.value = null
+  showAddModal.value = true
+}
+
+async function handleReplaceStart(loc) {
+  showAddModal.value = false
+  const dayIdx = currentDayIndex.value
+  if (!loc.city && plan.value.start_location?.city) loc.city = plan.value.start_location.city
+  planStore.setDayStartLocation(dayIdx, loc)
+  planStore.tempStartLocation = { ...loc }
+  ui.showToast('当日起点已更新')
+}
+
+async function handleLocationSelectFromModal(loc) {
+  if (addModalMode.value === 'replaceStart') {
+    await handleReplaceStart(loc)
+    addModalMode.value = 'add'
+    return
+  }
+  await handleAddLocation(loc)
 }
 
 async function handleAddLocation(loc) {
@@ -195,10 +234,16 @@ function openTransportDropdown(segIndex) {
 }
 
 async function onTransportModeSelect(mode) {
+  const segIndex = transportDropdownSegIndex.value
   showTransportDropdown.value = false
-  if (transportDropdownSegIndex.value < 0) return
+  if (segIndex < 0) return
+  if (mode === 'flight') {
+    flightTicketReplaceSegIndex.value = segIndex
+    showTicketModal.value = true
+    return
+  }
   try {
-    await planStore.changeTransportMode(transportDropdownSegIndex.value, mode)
+    await planStore.changeTransportMode(segIndex, mode)
     ui.showToast('交通方式已更新')
   } catch {
     ui.showToast('切换交通方式失败', 'error')
@@ -207,11 +252,24 @@ async function onTransportModeSelect(mode) {
 
 // Ticket import
 function openTicketImport() {
+  flightTicketReplaceSegIndex.value = null
   showAddModal.value = false
   showTicketModal.value = true
 }
 
+function onTicketModalClose() {
+  showTicketModal.value = false
+  flightTicketReplaceSegIndex.value = null
+}
+
 async function handleTicketImported(data) {
+  if (flightTicketReplaceSegIndex.value !== null) {
+    planStore.replaceSegmentWithTicketData(flightTicketReplaceSegIndex.value, data)
+    flightTicketReplaceSegIndex.value = null
+    showTicketModal.value = false
+    ui.showToast('已更新为航班')
+    return
+  }
   showTicketModal.value = false
   const dayIdx = currentDayIndex.value
   const segs = days.value[dayIdx].segments
@@ -353,12 +411,14 @@ async function handleDelete() {
             :location="planStore.tempStartLocation"
             :index="0"
             :is-last="true"
-            :role-label="currentDayIndex === 0 ? '起点' : null"
+            :role-label="currentDayIndex === 0 ? '起点' : '起点'"
             :arrival-hm="arrivalTimes[0]?.arrivalHm || '--'"
             :stay-minutes="arrivalTimes[0]?.stayMinutes || 0"
             :departure-hm="arrivalTimes[0]?.departureHm"
             :day-index="currentDayIndex"
+            :can-edit-start="true"
             @insert="openAddModal"
+            @edit-start="openReplaceStartModal"
             @remove="handleRemoveLocation"
             @update-stay="updateStay"
           />
@@ -378,12 +438,14 @@ async function handleDelete() {
                 :location="seg.origin"
                 :index="i"
                 :is-last="false"
-                :role-label="(i === 0 && currentDayIndex === 0) ? '起点' : null"
+                :role-label="(i === 0 && currentDayIndex === 0) ? '起点' : (i === 0 ? '起点' : null)"
                 :arrival-hm="arrivalTimes[i]?.arrivalHm || '--'"
                 :stay-minutes="arrivalTimes[i]?.stayMinutes || 0"
                 :departure-hm="arrivalTimes[i]?.departureHm"
                 :day-index="currentDayIndex"
+                :can-edit-start="i === 0"
                 @insert="openAddModal"
+                @edit-start="openReplaceStartModal"
                 @remove="handleRemoveLocation"
                 @update-stay="updateStay"
               />
@@ -433,16 +495,19 @@ async function handleDelete() {
     <!-- Modals -->
     <AddLocationModal
       :show="showAddModal"
+      :title="addModalMode === 'replaceStart' ? '修改当日起点' : '添加行程地点'"
       :city="currentDay?.city || ''"
       :insert-at-index="addInsertIndex"
       @close="showAddModal = false"
-      @select="handleAddLocation"
+      @select="handleLocationSelectFromModal"
       @open-ticket-import="openTicketImport"
     />
 
     <TicketImportModal
       :show="showTicketModal"
-      @close="showTicketModal = false"
+      :title="flightTicketReplaceSegIndex !== null ? '上传机票截图' : '导入航班 / 车票'"
+      :expect-flight-only="flightTicketReplaceSegIndex !== null"
+      @close="onTicketModalClose"
       @imported="handleTicketImported"
     />
 

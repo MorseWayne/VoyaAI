@@ -2,22 +2,38 @@
  * Formatting utility functions.
  */
 
-/** Get transport icon class for a given transport type */
-export function getTransportIcon(type) {
-  const icons = {
-    driving: 'fa-car',
-    transit: 'fa-bus',
-    walking: 'fa-walking',
-    cycling: 'fa-bicycle',
-    flight: 'fa-plane',
-    train: 'fa-train',
-  }
-  return icons[type] || 'fa-car'
+const TRANSPORT_ICONS = {
+  driving: 'fa-car',
+  transit: 'fa-bus',
+  walking: 'fa-walking',
+  cycling: 'fa-bicycle',
+  flight: 'fa-plane',
+  train: 'fa-train',
 }
 
-/** Get transport label for a given segment */
+/** Infer display type from segment when stored type is wrong (e.g. flight saved as driving). */
+export function inferSegmentDisplayType(segment) {
+  if (!segment) return 'driving'
+  if (segment.type === 'flight' || segment.type === 'train') return segment.type
+  const dep = segment.details?.departure_time || segment.origin?.departure_time
+  const arr = segment.details?.arrival_time || segment.destination?.arrival_time
+  if (!dep || !arr) return segment.type
+  const name = (segment.origin?.name || '') + (segment.destination?.name || '')
+  if (/机场|航空|航班/i.test(name)) return 'flight'
+  if (/站|火车站|高铁|动车|列车/i.test(name)) return 'train'
+  return segment.type
+}
+
+/** Get transport icon class. Pass segment for inferred type (e.g. flight from airport names). */
+export function getTransportIcon(typeOrSegment) {
+  const type = typeof typeOrSegment === 'string' ? typeOrSegment : inferSegmentDisplayType(typeOrSegment)
+  return TRANSPORT_ICONS[type] || 'fa-car'
+}
+
+/** Get transport label for a given segment (uses inferred type when segment has flight/train clues). */
 export function getTransportLabel(segment) {
   if (!segment) return '驾车'
+  const displayType = inferSegmentDisplayType(segment)
   const labels = {
     driving: '驾车',
     transit: (segment.details?.display_label === '城际交通') ? '城际交通' : '公交',
@@ -26,7 +42,7 @@ export function getTransportLabel(segment) {
     flight: segment.details?.flight_no || '航班',
     train: segment.details?.train_no || '高铁',
   }
-  return labels[segment.type] || '驾车'
+  return labels[displayType] || '驾车'
 }
 
 /** City data for autocomplete */

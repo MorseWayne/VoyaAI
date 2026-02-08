@@ -41,6 +41,7 @@ class DayPlan(BaseModel):
     start_time_hm: Optional[str] = None  # 当日出发时间，如 "08:00"
     location_stay_minutes: Optional[List[int]] = None  # 各地点停留分钟数，长度 = len(segments)+1
     layout: Optional[List[Dict[str, float]]] = None  # 画布布局坐标 [{x:100, y:100}, ...]
+    start_location: Optional[Location] = None  # 当日起点（未设置时继承上一天终点）
 
 class Itinerary(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

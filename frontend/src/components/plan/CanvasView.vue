@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { usePlanStore } from '@/stores/plan'
 import { useCanvasDrag } from '@/composables/useCanvasDrag'
+import { getTransportIcon, getTransportLabel } from '@/utils/format'
 import CanvasItem from './CanvasItem.vue'
 
 const props = defineProps({
@@ -208,8 +209,8 @@ watch(() => [props.segments, props.layout], () => nextTick(drawConnections), { d
           :style="{ top: getBadgePos(i).y + 'px', left: getBadgePos(i).x + 'px', transform: 'translate(-50%, -50%)', background: 'var(--transport-bg)', color: 'var(--transport-text)', border: '1px solid var(--transport-border)' }"
           @click.stop="emit('openTransport', $event, i)"
         >
-          <i :class="['fas', seg.type === 'transit' ? 'fa-bus' : seg.type === 'walking' ? 'fa-walking' : seg.type === 'cycling' ? 'fa-bicycle' : seg.type === 'flight' ? 'fa-plane' : seg.type === 'train' ? 'fa-train' : 'fa-car']"></i>
-          <span class="font-bold">{{ seg.type === 'transit' ? '公交' : seg.type === 'walking' ? '步行' : seg.type === 'cycling' ? '骑行' : seg.type === 'flight' ? '航班' : seg.type === 'train' ? '火车' : '驾车' }}</span>
+          <i :class="['fas', getTransportIcon(seg)]"></i>
+          <span class="font-bold">{{ getTransportLabel(seg) }}</span>
         </div>
       </template>
     </div>

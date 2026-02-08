@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { formatDuration } from '@/utils/time'
-import { getTransportIcon } from '@/utils/format'
+import { formatDuration, durationSecondsFromTimes } from '@/utils/time'
+import { getTransportIcon, inferSegmentDisplayType } from '@/utils/format'
 
 const props = defineProps({
   show: Boolean,
@@ -10,7 +10,8 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'change'])
 
-const icon = computed(() => getTransportIcon(props.segment?.type))
+const displayType = computed(() => inferSegmentDisplayType(props.segment))
+const icon = computed(() => getTransportIcon(props.segment))
 
 const typeLabel = computed(() => {
   if (!props.segment) return '驾车'
@@ -23,16 +24,27 @@ const typeLabel = computed(() => {
     flight: s.details?.flight_no || '航班',
     train: s.details?.train_no || '高铁/火车',
   }
-  return labels[s.type] || '驾车'
+  return labels[displayType.value] || '驾车'
 })
 
-const duration = computed(() => props.segment?.duration_minutes ? formatDuration(props.segment.duration_minutes * 60) : '--')
-const distance = computed(() => props.segment?.distance_km ? `${props.segment.distance_km} km` : '--')
 const dep = computed(() => props.segment?.details?.departure_time || props.segment?.origin?.departure_time)
 const arr = computed(() => props.segment?.details?.arrival_time || props.segment?.destination?.arrival_time)
+const durationSeconds = computed(() => {
+  if (dep.value && arr.value) {
+    const s = durationSecondsFromTimes(dep.value, arr.value)
+    if (s > 0) return s
+  }
+  return props.segment?.duration_minutes != null ? props.segment.duration_minutes * 60 : null
+})
+const duration = computed(() => durationSeconds.value != null ? formatDuration(durationSeconds.value) : '--')
+const distance = computed(() => {
+  if (props.segment?.distance_km != null && props.segment.distance_km > 0) return `${props.segment.distance_km} km`
+  if (displayType.value === 'flight' || displayType.value === 'train') return '—'
+  return '--'
+})
 const originName = computed(() => props.segment?.origin?.name || '起点')
 const destName = computed(() => props.segment?.destination?.name || '终点')
-const isFlightOrTrain = computed(() => props.segment?.type === 'flight' || props.segment?.type === 'train')
+const isFlightOrTrain = computed(() => displayType.value === 'flight' || displayType.value === 'train')
 const isImportedFixed = computed(() => (props.segment?.type === 'flight' && props.segment?.details?.flight_no) || (props.segment?.type === 'train' && props.segment?.details?.train_no))
 </script>
 

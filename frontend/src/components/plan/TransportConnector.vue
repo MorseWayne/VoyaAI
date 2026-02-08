@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { formatDuration } from '@/utils/time'
-import { getTransportIcon, getTransportLabel } from '@/utils/format'
+import { formatDuration, durationSecondsFromTimes } from '@/utils/time'
+import { getTransportIcon, getTransportLabel, inferSegmentDisplayType } from '@/utils/format'
 
 const props = defineProps({
   segment: { type: Object, required: true },
@@ -10,21 +10,35 @@ const props = defineProps({
 
 const emit = defineEmits(['openDetail'])
 
-const icon = computed(() => getTransportIcon(props.segment.type))
+const icon = computed(() => getTransportIcon(props.segment))
 const label = computed(() => getTransportLabel(props.segment))
 
-const isFlightOrTrain = computed(() => props.segment.type === 'flight' || props.segment.type === 'train')
+const displayType = computed(() => inferSegmentDisplayType(props.segment))
+const isFlightOrTrain = computed(() => displayType.value === 'flight' || displayType.value === 'train')
 
 const dep = computed(() => props.segment.details?.departure_time || props.segment.origin?.departure_time)
 const arr = computed(() => props.segment.details?.arrival_time || props.segment.destination?.arrival_time)
 const timeRange = computed(() => (dep.value && arr.value) ? `${dep.value} → ${arr.value}` : (dep.value || arr.value || ''))
 
-const infoText = computed(() => {
-  if (isFlightOrTrain.value && timeRange.value) return timeRange.value
-  return props.segment.duration_minutes ? formatDuration(props.segment.duration_minutes * 60) : '--'
+/** 优先用起降时间计算时长；若存了错误的大数值 duration_minutes 则用时间差覆盖 */
+const durationSeconds = computed(() => {
+  if (dep.value && arr.value) {
+    const s = durationSecondsFromTimes(dep.value, arr.value)
+    if (s > 0) return s
+  }
+  return props.segment.duration_minutes != null ? props.segment.duration_minutes * 60 : null
 })
 
-const distance = computed(() => props.segment.distance_km ? `${props.segment.distance_km}km` : '--')
+const infoText = computed(() => {
+  if (isFlightOrTrain.value && timeRange.value) return timeRange.value
+  return durationSeconds.value != null ? formatDuration(durationSeconds.value) : '--'
+})
+
+const distance = computed(() => {
+  if (props.segment.distance_km != null && props.segment.distance_km > 0) return `${props.segment.distance_km}km`
+  if (isFlightOrTrain.value) return '—'
+  return '--'
+})
 </script>
 
 <template>

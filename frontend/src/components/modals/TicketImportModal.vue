@@ -2,7 +2,13 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { parseTicket } from '@/api/plans'
 
-const props = defineProps({ show: Boolean })
+const props = defineProps({
+  show: Boolean,
+  /** When set, modal title and copy indicate flight ticket upload only */
+  title: { type: String, default: '导入航班 / 车票' },
+  /** When true, only accept parse result with type === 'flight'; otherwise show error */
+  expectFlightOnly: { type: Boolean, default: false },
+})
 const emit = defineEmits(['close', 'imported'])
 
 const imageBase64 = ref(null)
@@ -42,7 +48,12 @@ async function handleSubmit() {
       status.value = ''
       return
     }
-    status.value = '已加入当天行程'
+    if (props.expectFlightOnly && data.type !== 'flight') {
+      error.value = '请上传机票截图'
+      status.value = ''
+      return
+    }
+    status.value = props.expectFlightOnly ? '已更新为航班' : '已加入当天行程'
     emit('imported', data)
     emit('close')
   } catch (e) {
@@ -81,12 +92,12 @@ onBeforeUnmount(() => {
       <div class="absolute inset-0 backdrop-blur-sm" style="background: var(--modal-overlay);" @click="onClose"></div>
       <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] max-w-md rounded-2xl shadow-2xl p-6" style="background: var(--modal-bg);" @click.stop>
         <div class="flex justify-between items-center mb-4">
-          <h3 class="text-lg font-bold t-heading">导入航班 / 车票</h3>
+          <h3 class="text-lg font-bold t-heading">{{ title }}</h3>
           <button type="button" @click="onClose" class="w-8 h-8 flex items-center justify-center rounded-full t-text-sub transition" style="background: var(--bg-inset);">
             <i class="fas fa-times"></i>
           </button>
         </div>
-        <p class="text-sm t-text-sub mb-3">上传或粘贴机票、高铁票等截图，自动识别并加入当天行程</p>
+        <p class="text-sm t-text-sub mb-3">{{ expectFlightOnly ? '上传机票截图，自动识别航班信息并更新该段交通' : '上传或粘贴机票、高铁票等截图，自动识别并加入当天行程' }}</p>
 
         <div @click="onDropClick" class="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer hover:border-cyan-400 transition" style="border-color: var(--border-color);">
           <input id="ticket-file-input" type="file" accept="image/*" class="hidden" @change="onFileChange">
