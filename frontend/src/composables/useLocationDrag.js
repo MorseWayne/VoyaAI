@@ -3,13 +3,20 @@ import { usePlanStore } from '@/stores/plan'
 
 /**
  * Composable for drag-and-drop reordering of locations within a day.
+ * @param { { enabled?: boolean } } [options] - options.enabled: false 可禁用拖拽
  */
-export function useLocationDrag() {
+export function useLocationDrag(options = {}) {
+  const { enabled = true } = options
   const planStore = usePlanStore()
   const dragIndex = ref(null)
   const dragOverIndex = ref(null)
 
   function onDragStart(e, index) {
+    if (!enabled) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     dragIndex.value = index
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', String(index))
@@ -17,6 +24,7 @@ export function useLocationDrag() {
 
   function onDragOver(e, index) {
     e.preventDefault()
+    if (!enabled) return
     e.dataTransfer.dropEffect = 'move'
     dragOverIndex.value = index
   }
@@ -27,6 +35,7 @@ export function useLocationDrag() {
 
   async function onDrop(e, toIndex, dayIndex) {
     e.preventDefault()
+    if (!enabled) return
     const fromIndex = dragIndex.value
     dragOverIndex.value = null
     if (fromIndex === null || fromIndex === toIndex) {

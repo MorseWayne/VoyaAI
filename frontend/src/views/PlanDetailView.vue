@@ -19,7 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const planStore = usePlanStore()
 const ui = useUIStore()
-const { dragIndex, dragOverIndex, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd } = useLocationDrag()
+const { dragIndex, dragOverIndex, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd } = useLocationDrag({ enabled: false })
 
 const loading = ref(true)
 
@@ -426,7 +426,7 @@ async function handleDelete() {
           <!-- Segments loop -->
           <template v-for="(seg, i) in currentSegments" :key="i">
             <div
-              draggable="true"
+              draggable="false"
               @dragstart="onDragStart($event, i)"
               @dragover="onDragOver($event, i)"
               @dragleave="onDragLeave"
@@ -459,7 +459,7 @@ async function handleDelete() {
           <!-- Last destination -->
           <div
             v-if="currentSegments.length > 0"
-            draggable="true"
+            draggable="false"
             @dragstart="onDragStart($event, currentSegments.length)"
             @dragover="onDragOver($event, currentSegments.length)"
             @dragleave="onDragLeave"

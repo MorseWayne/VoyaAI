@@ -295,6 +295,138 @@ body {
     font-weight: 600;
 }
 
+/* ========== Plan Timeline (行程卡片) ========== */
+.timeline-item {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    width: 100%;
+    min-width: 0;
+}
+
+.timeline-rail {
+    flex-shrink: 0;
+    width: 3.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 0.25rem;
+    padding-bottom: 0;
+    min-height: 100%;
+}
+
+.timeline-node {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--timeline-node-bg);
+    border: 2px solid var(--timeline-node-border);
+    color: var(--timeline-node-text);
+    box-shadow: var(--timeline-node-shadow);
+    flex-shrink: 0;
+}
+
+.timeline-time {
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font-mono, "Fira Code", monospace);
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+    margin-bottom: 0.125rem;
+}
+
+.timeline-line {
+    flex: 1;
+    min-height: 0.5rem;
+    width: 2px;
+    background: var(--timeline-line-color);
+    margin: 0;
+    /* 向下延伸 2px 与下一段线条重叠，消除间隙 */
+    margin-bottom: -2px;
+}
+
+.location-card {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    padding: 1rem 1.25rem;
+    border-radius: 0.75rem;
+    background: var(--location-card-bg);
+    border: 1px solid var(--location-card-border);
+    box-shadow: var(--location-card-shadow);
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.location-card:hover {
+    box-shadow: var(--location-card-hover-shadow);
+    border-color: var(--location-card-hover-border);
+}
+
+.location-card.is-start {
+    border-top: 4px solid #10b981;
+    border-top-left-radius: 0.75rem;
+    border-top-right-radius: 0.75rem;
+}
+
+.location-card.is-end {
+    border-bottom: 2px solid #f43f5e;
+}
+
+.transport-connector-row {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+}
+
+.timeline-rail-spacer {
+    flex-shrink: 0;
+    width: 3.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0;
+    min-height: 2rem;
+}
+
+.timeline-line-through {
+    width: 2px;
+    flex: 1;
+    min-height: 0.5rem;
+    background: var(--timeline-line-color);
+    margin: 0;
+    /* 负边距使与上下线条重叠，消除间隙 */
+    margin-top: -2px;
+}
+
+.transport-badge {
+    flex: 1;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background: var(--transport-bg);
+    border: 1px solid var(--transport-border);
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.transport-badge:hover {
+    background: var(--transport-hover-bg);
+}
+
+.transport-badge-divider {
+    width: 1px;
+    height: 1rem;
+    background: var(--border-color);
+    opacity: 0.6;
+}
+
 /* ========== Animations ========== */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
