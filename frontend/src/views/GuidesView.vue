@@ -22,10 +22,11 @@ const fetchGuides = async () => {
 }
 
 const handleImport = async () => {
-  if (!importContent.value) return
+  const content = importContent.value?.trim()
+  if (!content) return
   importing.value = true
   try {
-    await importGuide(importContent.value)
+    await importGuide(content)
     showImportModal.value = false
     importContent.value = ''
     await fetchGuides()
@@ -75,7 +76,7 @@ onMounted(fetchGuides)
       </div>
 
       <div v-else-if="guides.length === 0" class="text-center py-12 rounded-xl border-2 border-dashed" style="border-color: var(--border-color);">
-        <p class="text-lg mb-4" style="color: var(--text-secondary);">暂无攻略，请导入 Markdown 笔记</p>
+        <p class="text-lg mb-4" style="color: var(--text-secondary);">暂无攻略，粘贴文本或 Markdown 即可导入</p>
       </div>
 
       <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -107,29 +108,36 @@ onMounted(fetchGuides)
 
     <!-- Import Modal -->
     <div v-if="showImportModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6" style="background: var(--bg-card);">
-        <h2 class="text-xl font-bold mb-4" style="color: var(--text-heading);">导入 Markdown 攻略</h2>
+      <div class="rounded-xl shadow-2xl w-full max-w-2xl p-6 overflow-hidden" style="background: var(--bg-card);">
+        <h2 class="text-xl font-bold mb-2" style="color: var(--text-heading);">导入攻略</h2>
+        <p class="text-sm mb-4" style="color: var(--text-secondary);">粘贴任意格式的攻略文本，AI 将自动解析为结构化内容</p>
         <textarea 
           v-model="importContent"
-          class="w-full h-64 p-4 rounded-lg border mb-4 focus:ring-2 focus:ring-cyan-500 outline-none resize-none font-mono text-sm"
+          :disabled="importing"
+          class="w-full h-64 p-4 rounded-lg border focus:ring-2 focus:ring-cyan-500 outline-none resize-none font-mono text-sm disabled:opacity-70 disabled:cursor-not-allowed"
           style="background: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);"
-          placeholder="# 标题&#10;## 章节...&#10;内容..."
+          placeholder="支持纯文本、Markdown 或任意格式的攻略笔记&#10;&#10;例如：&#10;深圳到香港一日游攻略&#10;早上从福田口岸过关...&#10;交通：地铁东铁线...&#10;费用：..."
         ></textarea>
-        <div class="flex justify-end gap-3">
+        <div v-if="importing" class="mt-2 flex items-center gap-2 text-sm" style="color: var(--text-secondary);">
+          <span class="inline-block w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></span>
+          AI 解析中，请稍候...
+        </div>
+        <div class="flex justify-end gap-3 mt-4">
           <button 
             @click="showImportModal = false"
-            class="px-4 py-2 rounded-lg font-medium transition-colors"
+            :disabled="importing"
+            class="px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
             style="color: var(--text-secondary); background: var(--bg-inset);"
           >
             取消
           </button>
           <button 
             @click="handleImport"
-            :disabled="importing || !importContent"
+            :disabled="importing || !importContent.trim()"
             class="px-4 py-2 rounded-lg font-medium text-white transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             style="background: linear-gradient(135deg, var(--logo-text-from), var(--logo-text-to));"
           >
-            {{ importing ? '导入中...' : '确认导入' }}
+            {{ importing ? '解析中...' : '确认导入' }}
           </button>
         </div>
       </div>

@@ -3,7 +3,7 @@ defineProps(['section'])
 </script>
 
 <template>
-  <section class="rounded-xl p-6 shadow-sm" style="background: var(--bg-card); border: 1px solid var(--border-color);">
+  <section class="rounded-xl p-6 shadow-sm" style="background: var(--bg-card); border: 1px solid var(--border-color); border-top: none;">
     <h2 class="text-xl font-bold mb-4 flex items-center gap-2" style="color: var(--text-heading);">
       <span class="text-2xl">🌤️</span> {{ section.title }}
     </h2>

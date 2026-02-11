@@ -40,28 +40,35 @@ function navigate(name) {
           <span class="text-2xl font-bold logo-text tracking-tight">VoyaAI</span>
         </div>
 
-        <!-- Desktop Menu -->
-        <div v-show="!isHome" class="hidden md:flex space-x-1 items-center">
-          <button
-            v-for="item in navItems"
-            :key="item.name"
-            @click="navigate(item.name)"
-            class="nav-item py-3 px-4 transition duration-200 rounded-lg flex items-center gap-2 cursor-pointer"
-            :class="{ active: route.name === item.name }"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" :d="item.icon"/>
-            </svg>
-            {{ item.label }}
-          </button>
-          <div class="w-px h-6 mx-1" style="background: var(--border-color);"></div>
+        <!-- 右侧：导航 + 主题切换（主题切换所有页面都显示） -->
+        <div class="flex items-center gap-2">
+          <!-- Desktop Menu -->
+          <div v-show="!isHome" class="hidden md:flex space-x-1 items-center">
+            <button
+              v-for="item in navItems"
+              :key="item.name"
+              @click="navigate(item.name)"
+              class="nav-item py-3 px-4 transition duration-200 rounded-lg flex items-center gap-2 cursor-pointer"
+              :class="{ active: route.name === item.name }"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" :d="item.icon"/>
+              </svg>
+              {{ item.label }}
+            </button>
+            <div class="w-px h-6 mx-1" style="background: var(--border-color);"></div>
+          </div>
+          <!-- 主题切换 - 所有页面右上角 -->
           <ThemeToggle />
-        </div>
 
-        <!-- Mobile Menu Button -->
-        <div v-show="!isHome" class="md:hidden flex items-center gap-2">
-          <ThemeToggle />
-          <button @click="mobileMenuOpen = !mobileMenuOpen" class="t-text-sub hover:text-primary focus:outline-none p-2 rounded-lg transition cursor-pointer" style="background: var(--nav-hover-bg);" aria-label="打开菜单">
+          <!-- Mobile Menu Button -->
+          <button
+            v-show="!isHome"
+            @click="mobileMenuOpen = !mobileMenuOpen"
+            class="md:hidden t-text-sub hover:text-primary focus:outline-none p-2 rounded-lg transition cursor-pointer"
+            style="background: var(--nav-hover-bg);"
+            aria-label="打开菜单"
+          >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
             </svg>

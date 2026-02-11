@@ -58,7 +58,7 @@ class RouteRequest(BaseModel):
 
 
 class GuideImportRequest(BaseModel):
-    content: str = Field(..., description="Markdown content of the guide")
+    content: str = Field(..., description="Text or Markdown content of the guide (LLM will parse)")
 
 @router.get("/guides", response_model=list[Guide])
 async def list_guides():
@@ -75,9 +75,9 @@ async def get_guide(guide_id: str):
 
 @router.post("/guides/import", response_model=Guide)
 async def import_guide(request: GuideImportRequest):
-    """Import a guide from Markdown content."""
+    """Import a guide from text or Markdown. Uses LLM to parse plain text; falls back to rule-based parser if needed."""
     try:
-        guide = guide_parser.parse(request.content)
+        guide = await guide_parser.parse_with_llm(request.content)
         storage_service.save_guide(guide)
         return guide
     except Exception as e:

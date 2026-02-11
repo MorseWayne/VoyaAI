@@ -90,8 +90,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Include API routes
-    app.include_router(router)
+    # Include API routes under /api prefix (so /guides/:id serves SPA, not JSON)
+    app.include_router(router, prefix="/api")
 
     # SPA catch-all: serve static files or fall back to index.html
     static_dir = Path("static")

@@ -27,10 +27,15 @@ const getComponent = (type) => {
 
 <template>
   <div class="space-y-8">
-    <div v-for="(section, index) in guide.sections" :key="index">
-      <component 
-        :is="getComponent(section.type)" 
-        :section="section" 
+    <div
+      v-for="(section, index) in guide.sections"
+      :key="index"
+      :id="`section-${index}`"
+      class="scroll-mt-24"
+    >
+      <component
+        :is="getComponent(section.type)"
+        :section="section"
       />
     </div>
   </div>

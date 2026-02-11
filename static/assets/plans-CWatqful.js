@@ -1,1 +1,0 @@
-import{g as e,p as t,d as n}from"./client-Be4OVhjz.js";function s(){return e("/travel/plans")}function l(a){return e(`/travel/plans/${a}`)}function p(a){return t("/travel/plans",a)}function u(a){return n(`/travel/plans/${a}`)}function c(a){return t("/travel/parse-ticket",{image_base64:a})}export{l as a,u as d,s as f,c as p,p as s};

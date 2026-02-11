@@ -17,10 +17,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/travel': 'http://localhost:8182',
-      '/health': 'http://localhost:8182',
-      '/status': 'http://localhost:8182',
-      '/test': 'http://localhost:8182',
+      '/api': 'http://localhost:8182',
     },
   },
 })

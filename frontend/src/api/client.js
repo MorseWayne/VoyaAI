@@ -2,7 +2,7 @@
  * HTTP client wrapper for API calls.
  */
 
-const BASE_URL = ''
+const BASE_URL = '/api'
 
 export async function request(url, options = {}) {
   const response = await fetch(`${BASE_URL}${url}`, {

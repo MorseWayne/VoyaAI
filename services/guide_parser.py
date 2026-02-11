@@ -1,6 +1,38 @@
+import json
+import logging
 import re
+from pathlib import Path
 from typing import List, Dict, Any, Optional
+
 from api.models import Guide, GuideSection
+
+logger = logging.getLogger(__name__)
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def _load_guide_parse_prompt() -> str:
+    """Load prompt for LLM guide parsing."""
+    p = PROMPTS_DIR / "guide_parse_from_text.txt"
+    if p.exists():
+        return p.read_text(encoding="utf-8")
+    return "将用户提供的攻略文本解析为 JSON，包含 title 和 sections（每项有 title, type, content, data）。"
+
+
+def _parse_json_from_llm(raw: str) -> Optional[Dict[str, Any]]:
+    """Extract JSON object from LLM output (may be wrapped in markdown)."""
+    if not raw or not raw.strip():
+        return None
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+        if not isinstance(data, dict):
+            return None
+        return data
+    except json.JSONDecodeError:
+        return None
+
 
 class GuideParser:
     def parse(self, markdown: str) -> Guide:
@@ -32,6 +64,61 @@ class GuideParser:
         if current_section_title or current_section_lines:
             self._add_section(sections, current_section_title, current_section_lines)
             
+        return Guide(title=title, sections=sections)
+
+    async def parse_with_llm(self, text: str) -> Guide:
+        """
+        Parse guide from plain text using LLM.
+        Falls back to rule-based markdown parser if LLM fails or returns invalid format.
+        """
+        text = (text or "").strip()
+        if not text:
+            return Guide(title="未命名攻略", sections=[])
+
+        try:
+            from services.llm_factory import create_client
+            from config import get_settings
+
+            prompt = _load_guide_parse_prompt()
+            user_content = prompt + "\n\n" + text
+            settings = get_settings()
+            client = create_client()
+            response = await client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[{"role": "user", "content": user_content}],
+                timeout=120,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            data = _parse_json_from_llm(raw)
+            if data and "sections" in data:
+                guide = self._build_guide_from_llm(data)
+                if guide.sections:
+                    logger.info(f"LLM parsed guide: {guide.title} with {len(guide.sections)} sections")
+                    return guide
+        except Exception as e:
+            logger.warning(f"LLM guide parse failed: {e}, falling back to markdown parser")
+
+        return self.parse(text)
+
+    def _build_guide_from_llm(self, data: Dict[str, Any]) -> Guide:
+        """Build Guide from LLM output dict."""
+        title = str(data.get("title") or "未命名攻略").strip() or "未命名攻略"
+        sections_raw = data.get("sections") or []
+        sections: List[GuideSection] = []
+        for item in sections_raw:
+            if not isinstance(item, dict):
+                continue
+            stitle = str(item.get("title") or "").strip()
+            stype = str(item.get("type") or "text").lower()
+            if stype not in ("text", "weather", "timeline", "commute", "expenses", "info"):
+                stype = "text"
+            content = str(item.get("content") or "").strip()
+            sdata = item.get("data")
+            if sdata is not None and not isinstance(sdata, (dict, list)):
+                sdata = None
+            sections.append(
+                GuideSection(title=stitle, type=stype, content=content, data=sdata)
+            )
         return Guide(title=title, sections=sections)
 
     def _add_section(self, sections: List[GuideSection], title: str, lines: List[str]):
