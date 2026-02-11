@@ -31,6 +31,16 @@ const routes = [
     name: 'chat',
     component: () => import('@/views/ChatView.vue'),
   },
+  {
+    path: '/guides',
+    name: 'guides',
+    component: () => import('@/views/GuidesView.vue'),
+  },
+  {
+    path: '/guides/:id',
+    name: 'guide-detail',
+    component: () => import('@/views/GuideDetailView.vue'),
+  },
 ]
 
 const router = createRouter({

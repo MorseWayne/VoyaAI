@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from config import get_settings
 from services import TravelService, RouteService
 from services.storage_service import StorageService
-from api.models import Itinerary, Segment, TransportMode
+from services.guide_parser import GuideParser
+from api.models import Itinerary, Segment, TransportMode, Guide
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,6 +21,7 @@ router = APIRouter()
 travel_service = TravelService()
 route_service = RouteService()
 storage_service = StorageService()
+guide_parser = GuideParser()
 
 
 class TravelRequest(BaseModel):
@@ -54,6 +56,41 @@ class RouteRequest(BaseModel):
     preference: str = Field("time", description="Optimization preference: time, distance, transit_first, driving_first")
 
 
+
+class GuideImportRequest(BaseModel):
+    content: str = Field(..., description="Markdown content of the guide")
+
+@router.get("/guides", response_model=list[Guide])
+async def list_guides():
+    """List all imported guides."""
+    return storage_service.list_guides()
+
+@router.get("/guides/{guide_id}", response_model=Guide)
+async def get_guide(guide_id: str):
+    """Get a specific guide by ID."""
+    guide = storage_service.get_guide(guide_id)
+    if not guide:
+        raise HTTPException(status_code=404, detail="Guide not found")
+    return guide
+
+@router.post("/guides/import", response_model=Guide)
+async def import_guide(request: GuideImportRequest):
+    """Import a guide from Markdown content."""
+    try:
+        guide = guide_parser.parse(request.content)
+        storage_service.save_guide(guide)
+        return guide
+    except Exception as e:
+        logger.error(f"Error importing guide: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to import guide: {str(e)}")
+
+@router.delete("/guides/{guide_id}")
+async def delete_guide(guide_id: str):
+    """Delete a guide."""
+    success = storage_service.delete_guide(guide_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Guide not found")
+    return {"success": True}
 
 @router.get("/health")
 async def health_check():

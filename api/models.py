@@ -49,3 +49,18 @@ class Itinerary(BaseModel):
     start_location: Optional[Location] = None  # 创建行程时设置的起点
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class GuideSection(BaseModel):
+    title: str
+    type: str = "text"  # text, weather, timeline, commute, expenses, info
+    content: str = ""   # Raw markdown content
+    data: Optional[Any] = None  # Structured data (Dict, List, etc.)
+
+class Guide(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: Optional[str] = None
+    sections: List[GuideSection] = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
